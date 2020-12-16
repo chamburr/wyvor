@@ -24,7 +24,7 @@ Please follow these guidelines related to submitting a pull request.
   against the `master` branch, use the `dev` branch instead.
 - Always format your code with `scripts/format.sh` and make sure `scripts/lint.sh` returns no
   warnings or errors before opening a pull request.
-- Follow our commit conventions below. For subsequent commits to the pull request it is okay not to
+- Follow our commit conventions below. For subsequent commits to the pull request, it is okay not to
   follow them, because they will be eventually squashed.
 
 ## Commit Convention
