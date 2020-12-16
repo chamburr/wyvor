@@ -54,7 +54,7 @@
 export default {
   async asyncData({ $axios, $fatal }) {
     return {
-      status: Array(100).fill(await $axios.$get('/status').catch($fatal)),
+      status: await $axios.$get('/status').catch($fatal),
       stats: await $axios.$get('/stats').catch($fatal),
       playerStats: await $axios.$get('/stats/player').catch($fatal),
     }
