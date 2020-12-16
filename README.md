@@ -18,7 +18,7 @@ Links:
 Wyvor has a very complex infrastructure in order to guarantee 100% uptime. Some of the
 specifications are briefly explained here, please check out the code yourself for more information.
 
-### twilight-dipatch
+### twilight-dispatch
 
 We use a customised gateway implementation, known as twilight-dispatch, and integrate it with
 discordgo. As the gateway logic is separate from the application layer, we are able to perform
@@ -44,19 +44,19 @@ reliable and ensures data safety, such that events are never lost even when ther
 
 ### Rust
 
-Rust is one of, if not, the fastest languages in the world. Thanks to the nature of this language,
-we are able to provide the smoothest experience across all Discord bots.
+Rust is one of the fastest languages in the world. Thanks to the nature of this language, we are
+able to provide you the smoothest experience possibly across all Discord bots.
 
 ### Vue.js
 
-We use Vue ecosystem for our frontend website and dashboard. It is very performant and versatile,
-allowing the website to load at a rocket speed of under 0.5 seconds for initial content paint.
+We use the Vue ecosystem for our frontend website and dashboard. It is very performant and
+versatile, allowing the website to load at a rocket speed of under 0.5 seconds for initial paint.
 
 ### CircleCI
 
-Continuous integration is an important part of our workflow. It helps us to find errors quickly and
-ensure the quality of the code. CircleCI also provides us with continuous delivery capabilities,
-such that every new release will automatically trigger a deployment.
+Continuous integration is an important part of our workflow. It helps us find errors quickly and
+ensure the quality of code. CircleCI also provides us with continuous delivery capabilities, such
+that every new release will automatically trigger a deployment.
 
 ## Self-Hosting
 
