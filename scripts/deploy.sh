@@ -4,11 +4,14 @@ source ~/.profile
 
 WORKDIR=$(pwd)
 
+echo "Pulling..."
+git pull
+
 echo "Building Rust..."
 cd "$WORKDIR/api" && cargo build --release
 
 echo "Building Node..."
-cd "$WORKDIR/web" && yarn --silent build
+cd "$WORKDIR/web" && yarn && yarn --silent build
 
 echo "Building Go..."
 cd "$WORKDIR/bot" && go build
