@@ -124,9 +124,14 @@ jobs:
           fingerprints:
             - "14:bc:43:95:77:e6:52:3c:63:2a:2b:a4:0b:43:ee:3e"
       - run:
+          name: "Deploy: Known hosts"
+          command: |
+            mkdir -p ~/.ssh
+            ssh-keyscan -H $SSH_HOST >> ~/.ssh/known_hosts
+      - run:
           name: "Deploy: SSH"
           command: |
-            ssh $SSH_USER@$SSH_ROOT "cd wyvor && ./scripts/deploy.sh"
+            ssh $SSH_USER@$SSH_HOST "cd wyvor && ./scripts/deploy.sh"
 
 workflows:
   version: 2
@@ -187,6 +192,3 @@ workflows:
       - test_rust
       - test_node
       - test_go
-
-
-
