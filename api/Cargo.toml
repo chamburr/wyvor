@@ -1,6 +1,6 @@
 [package]
 name = "wyvor"
-version = "0.1.0"
+version = "1.0.0"
 authors = ["CHamburr <hi@chamburr.xyz>"]
 edition = "2018"
 readme = "README.md"
