@@ -54,7 +54,7 @@ allowing the website to load at a rocket speed of under 0.5 seconds for initial 
 
 ### CircleCI
 
-Continuous integration is an important part of our workflow. It helps as to find errors quickly and
+Continuous integration is an important part of our workflow. It helps us to find errors quickly and
 ensure the quality of the code. CircleCI also provides us with continuous delivery capabilities,
 such that every new release will automatically trigger a deployment.
 
