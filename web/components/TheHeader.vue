@@ -86,13 +86,14 @@
         </NuxtLink>
       </li>
       <li>
-        <NuxtLink
+        <a
           class="nav-link d-block font-weight-bolder py-2 mr-1"
-          to="/invite"
+          target="_blank"
+          href="/invite"
           @click.native="closeMenu"
         >
           <span>Invite</span>
-        </NuxtLink>
+        </a>
       </li>
       <li>
         <a
