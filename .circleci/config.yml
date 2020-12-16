@@ -156,12 +156,22 @@ workflows:
             tags:
               only: /v[0-9]+(\.[0-9]+)*/
       - hold:
+          filters:
+            branches:
+              ignore: /.*/
+            tags:
+              only: /v[0-9]+(\.[0-9]+)*/
           type: approval
           requires:
             - test_rust
             - test_node
             - test_go
       - deploy:
+          filters:
+            branches:
+              ignore: /.*/
+            tags:
+              only: /v[0-9]+(\.[0-9]+)*/
           requires:
             - hold
   nightly:
