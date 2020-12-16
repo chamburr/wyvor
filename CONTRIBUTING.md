@@ -3,12 +3,12 @@
 Hi, thanks for your interest in contributing to Wyvor! We'd love your help to make Wyvor even better
 than it is today. As a contributor, please be sure follow our set of guidelines below.
 
--   [Issues and Bugs](#issues-and-bugs)
--   [Pull Requests](#pull-requests)
--   [Commit Convention](#commit-convention)
--   [Project Structure](#project-structure)
--   [Questions](#questions)
--   [Code of Conduct](#code-of-conduct)
+- [Issues and Bugs](#issues-and-bugs)
+- [Pull Requests](#pull-requests)
+- [Commit Convention](#commit-convention)
+- [Project Structure](#project-structure)
+- [Questions](#questions)
+- [Code of Conduct](#code-of-conduct)
 
 ## Issues and Bugs
 
@@ -20,12 +20,12 @@ request.
 
 Please follow these guidelines related to submitting a pull request.
 
--   The `master` branch is a snapshot of the latest stable release. Please do not make pull requests
-    against the `master` branch, use the `dev` branch instead.
--   Always format your code with `scripts/format.sh` and make sure `scripts/lint.sh` returns no
-    warnings or errors before opening a pull request.
--   Follow our commit conventions below. For subsequent commits to the pull request it is okay not
-    to follow them, because they will be eventually squashed.
+- The `master` branch is a snapshot of the latest stable release. Please do not make pull requests
+  against the `master` branch, use the `dev` branch instead.
+- Always format your code with `scripts/format.sh` and make sure `scripts/lint.sh` returns no
+  warnings or errors before opening a pull request.
+- Follow our commit conventions below. For subsequent commits to the pull request it is okay not to
+  follow them, because they will be eventually squashed.
 
 ## Commit Convention
 
@@ -50,16 +50,16 @@ The header is mandatory.
 
 The type must be one of the following, scope is optional and can be decided at your discretion.
 
--   `build`: Changes to the build system or dependencies.
--   `ci`: Changes to our CI configuration files and scripts.
--   `chore`: Miscellaneous change.
--   `docs`: Changes only the documentation.
--   `feat`: Implements a new feature.
--   `fix`: Fixes an existing bug.
--   `perf`: Improves the performance of the code.
--   `refactor`: Changes to code neither fixes a bug nor adds a feature.
--   `style`: Changes to code that do not affect its functionality.
--   `test`: Adding missing tests or correcting existing tests.
+- `build`: Changes to the build system or dependencies.
+- `ci`: Changes to our CI configuration files and scripts.
+- `chore`: Miscellaneous change.
+- `docs`: Changes only the documentation.
+- `feat`: Implements a new feature.
+- `fix`: Fixes an existing bug.
+- `perf`: Improves the performance of the code.
+- `refactor`: Changes to code neither fixes a bug nor adds a feature.
+- `style`: Changes to code that do not affect its functionality.
+- `test`: Adding missing tests or correcting existing tests.
 
 ### Body
 
@@ -77,31 +77,31 @@ commit message is then used for explaining the change.
 
 These are the various components of Wyvor.
 
--   `api`: Handles HTTP API requests and connects to Andesite.
-    -   `migrations`: Database migration scripts for Diesel.
-    -   `src`: Contains the source code.
-        -   `db`: Handles PostgreSQL and Redis databases.
-        -   `models`: Structs for the database schema.
-        -   `routes`: Routes and handlers for the HTTP API.
-        -   `utils`: Miscellaneous utility functions.
--   `bot`: Handles messages from RabbitMQ queue and commands.
-    -   `commands`: Handles the bot commands.
-    -   `common`: Common variables for easy access.
-    -   `config`: Bot configurations.
-    -   `core`: Core part of the bot, such as event handlers.
-    -   `utils`: Miscellaneous utility functions.
--   `examples`: Example configuration files.
--   `scripts`: Utility bash scripts.
--   `web`: The frontend website and dashboard components.
-    -   `assets`: Un-compiled assets such as styles and images.
-    -   `components`: Reusable components for various pages.
-    -   `content`: Markdown contents for various pages.
-    -   `layout`: Core application feel and layout.
-    -   `middleware`: Functions ran before rendering a page.
-    -   `pages`: The application's views and routes.
-    -   `plugins`: Miscellaneous utility plugins.
-    -   `static`: Static files at the root of website.
-    -   `store`: Manages state across the application.
+- `api`: Handles HTTP API requests and connects to Andesite.
+  - `migrations`: Database migration scripts for Diesel.
+  - `src`: Contains the source code.
+    - `db`: Handles PostgreSQL and Redis databases.
+    - `models`: Structs for the database schema.
+    - `routes`: Routes and handlers for the HTTP API.
+    - `utils`: Miscellaneous utility functions.
+- `bot`: Handles messages from RabbitMQ queue and commands.
+  - `commands`: Handles the bot commands.
+  - `common`: Common variables for easy access.
+  - `config`: Bot configurations.
+  - `core`: Core part of the bot, such as event handlers.
+  - `utils`: Miscellaneous utility functions.
+- `examples`: Example configuration files.
+- `scripts`: Utility bash scripts.
+- `web`: The frontend website and dashboard components.
+  - `assets`: Un-compiled assets such as styles and images.
+  - `components`: Reusable components for various pages.
+  - `content`: Markdown contents for various pages.
+  - `layout`: Core application feel and layout.
+  - `middleware`: Functions ran before rendering a page.
+  - `pages`: The application's views and routes.
+  - `plugins`: Miscellaneous utility plugins.
+  - `static`: Static files at the root of website.
+  - `store`: Manages state across the application.
 
 ## Questions
 

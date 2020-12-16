@@ -8,11 +8,11 @@ our website, and information about how you interact with our website.
 
 We collect the information using the following technologies:
 
--   "Cookies" are data files that are placed on your device or computer and often include an
-    anonymous unique identifier. For more information about cookies, and how to disable cookies,
-    visit http://www.allaboutcookies.org.
--   "Log files" track actions occurring on our website, and collect data including your IP address,
-    browser type, Internet service provider, referring/exit pages, and date/time stamps.
+- "Cookies" are data files that are placed on your device or computer and often include an anonymous
+  unique identifier. For more information about cookies, and how to disable cookies, visit
+  http://www.allaboutcookies.org.
+- "Log files" track actions occurring on our website, and collect data including your IP address,
+  browser type, Internet service provider, referring/exit pages, and date/time stamps.
 
 # How We Use Your Information
 
