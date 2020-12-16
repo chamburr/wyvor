@@ -4,4 +4,5 @@ module.exports = {
   printWidth: 100,
   proseWrap: 'always',
   arrowParens: 'avoid',
+  tabWidth: 2,
 }
