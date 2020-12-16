@@ -1,0 +1,67 @@
+[package]
+name = "wyvor"
+version = "0.1.0"
+authors = ["CHamburr <hi@chamburr.xyz>"]
+edition = "2018"
+readme = "README.md"
+homepage = "https://wyvor.xyz"
+repository = "https://github.com/chamburr/wyvor"
+license = "AGPL-3.0"
+
+[dependencies]
+backtrace = "0.3.54"
+dashmap = "3.11.10"
+diesel_migrations = "1.4.0"
+dotenv = "0.15.0"
+event-listener = "2.5.1"
+futures = "0.3.8"
+http = "0.2.1"
+lazy_static = "1.4.0"
+nanoid = "0.3.0"
+num = "0.3.1"
+percent-encoding = "2.1.0"
+rand = "0.7.3"
+rocket = "0.4.6"
+sentry = "0.21.0"
+serde_json = "1.0.59"
+tokio-compat-02 = "0.1.2"
+twilight-http = "0.2.5"
+twilight-model = "0.2.4"
+url = "2.1.1"
+
+[dependencies.chrono]
+version = "0.4.19"
+features = ["serde"]
+
+[dependencies.diesel]
+version = "1.4.4"
+features = ["postgres", "chrono"]
+
+[dependencies.prometheus]
+version = "0.10.0"
+features = ["process"]
+
+[dependencies.reqwest]
+version = "0.10.8"
+features = ["blocking", "json"]
+
+[dependencies.rocket_contrib]
+version = "0.4.6"
+default-features = false
+features = ["json", "diesel_postgres_pool", "redis_pool"]
+
+[dependencies.serde]
+version = "1.0.117"
+features = ["derive"]
+
+[dependencies.twilight-andesite]
+git = "https://github.com/chamburr/twilight-andesite"
+branch = "master"
+
+[dependencies.twilight-oauth2]
+git = "https://github.com/twilight-rs/oauth2"
+branch = "trunk"
+
+[dependencies.uuid]
+version = "0.8.1"
+features = ["v4"]

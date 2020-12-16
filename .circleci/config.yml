@@ -1,0 +1,182 @@
+version: 2.1
+
+defaults: &defaults
+  working_directory: ~/wyvor
+
+executors:
+  default:
+    <<: *defaults
+    docker:
+      - image: cimg/base:stable
+        auth:
+          username: $DOCKERHUB_USER
+          password: $DOCKERHUB_PASS
+  rust:
+    <<: *defaults
+    docker:
+      - image: rust:latest
+        auth:
+          username: $DOCKERHUB_USER
+          password: $DOCKERHUB_PASS
+  node:
+    <<: *defaults
+    docker:
+      - image: cimg/node:current
+        auth:
+          username: $DOCKERHUB_USER
+          password: $DOCKERHUB_PASS
+  go:
+    <<: *defaults
+    docker:
+      - image: cimg/go:1.15
+        auth:
+          username: $DOCKERHUB_USER
+          password: $DOCKERHUB_PASS
+
+jobs:
+  test_rust:
+    <<: *defaults
+    executor: rust
+    working_directory: ~/wyvor/api
+    steps:
+      - checkout:
+          path: ../
+      - restore_cache:
+          keys:
+            - v1-cargo-{{ checksum "Cargo.lock" }}
+      - run:
+          name: "Rust: Setup"
+          command: |
+            rustup default nightly
+            rustup component add rustfmt --toolchain=nightly
+            rustup component add clippy --toolchain=nightly
+      - run:
+          name: "Rust: Build"
+          command: cargo build
+      - run:
+          name: "Rust: Format"
+          command: cargo fmt -- --check
+      - run:
+          name: "Rust: Lint"
+          command: cargo clippy -- -D warnings
+      - save_cache:
+          key: v1-cargo-{{ checksum "Cargo.lock" }}
+          paths:
+            - ~/.cargo
+            - ./target
+  test_node:
+    <<: *defaults
+    executor: node
+    working_directory: ~/wyvor/web
+    steps:
+      - checkout:
+          path: ../
+      - restore_cache:
+          keys:
+            - v1-yarn-{{ checksum "yarn.lock" }}
+      - run:
+          name: "Node: Setup"
+          command: yarn install --cache-folder ~/.cache/yarn
+      - run:
+          name: "Node: Build"
+          command: yarn --silent build
+      - run:
+          name: "Node: Format"
+          command: yarn --silent format:check
+      - run:
+          name: "Node: Lint"
+          command: yarn --silent lint
+      - save_cache:
+          key: v1-yarn-{{ checksum "yarn.lock" }}
+          paths:
+            - ~/.cache/yarn
+  test_go:
+    <<: *defaults
+    executor: go
+    working_directory: ~/wyvor/bot
+    steps:
+      - checkout:
+          path: ../
+      - restore_cache:
+          keys:
+            - v1-gomod-{{ checksum "go.sum" }}
+      - run:
+          name: "Go: Setup"
+          command: go mod download
+      - run:
+          name: "Go: Build"
+          command: go build
+      - run:
+          name: "Go: Format"
+          command: gofmt -s -l .
+      - run:
+          name: "Go: Lint"
+          command: go vet .
+      - save_cache:
+          key: v1-gomod-{{ checksum "go.sum" }}
+          paths:
+            - /go/pkg/mod
+  deploy:
+    <<: *defaults
+    executor: default
+    steps:
+      - add_ssh_keys:
+          fingerprints:
+            - "14:bc:43:95:77:e6:52:3c:63:2a:2b:a4:0b:43:ee:3e"
+      - run:
+          name: "Deploy: SSH"
+          command: |
+            ssh $SSH_USER@$SSH_ROOT "cd wyvor && ./scripts/deploy.sh"
+
+workflows:
+  version: 2
+  test:
+    jobs:
+      - test_rust
+      - test_node
+      - test_go
+  production:
+    jobs:
+      - test_rust:
+          filters:
+            branches:
+              ignore: /.*/
+            tags:
+              only: /v[0-9]+(\.[0-9]+)*/
+      - test_node:
+          filters:
+            branches:
+              ignore: /.*/
+            tags:
+              only: /v[0-9]+(\.[0-9]+)*/
+      - test_go:
+          filters:
+            branches:
+              ignore: /.*/
+            tags:
+              only: /v[0-9]+(\.[0-9]+)*/
+      - hold:
+          type: approval
+          requires:
+            - test_rust
+            - test_node
+            - test_go
+      - deploy:
+          requires:
+            - hold
+  nightly:
+    triggers:
+      - schedule:
+          cron: "0 0 * * *"
+          filters:
+            branches:
+              only:
+                - master
+                - dev
+    jobs:
+      - test_rust
+      - test_node
+      - test_go
+
+
+

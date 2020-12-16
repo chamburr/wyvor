@@ -1,0 +1,15 @@
+.DS_Store
+._*
+Thumbs.db
+
+.vscode
+.idea
+*.iml
+*.sublime-project
+*.sublime-workspace
+*.swp
+*.swo
+
+.env
+cache.db
+sw.js
