@@ -1,3 +1,12 @@
+## [1.0.3](https://github.com/chamburr/wyvor/compare/v1.0.2...v1.0.3) (2020-12-17)
+
+### Bug Fixes
+
+- **api:** fix everyone role permission check
+  ([b3ef816](https://github.com/chamburr/wyvor/commit/b3ef816a6fe2c348612d57cf9ab899ace866d7a5))
+- **bot:** fix metric collection for guild events
+  ([2183571](https://github.com/chamburr/wyvor/commit/218357105ab6b381f3bb14d0c6ebd4bc95d573b2))
+
 ## [1.0.2](https://github.com/chamburr/wyvor/compare/v1.0.1...v1.0.2) (2020-12-17)
 
 ### Bug Fixes
