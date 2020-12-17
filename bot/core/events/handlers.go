@@ -2,6 +2,7 @@ package events
 
 import (
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/chamburr/wyvor/common"
@@ -57,12 +58,17 @@ func HandleGuildCreate(event *EventData) (err error) {
 		return
 	}
 
-	_, err = common.Session.ChannelMessageSendEmbed(config.GuildsChannel.GetInt64(), &discordgo.MessageEmbed{
+	embed := &discordgo.MessageEmbed{
 		Title:       "Guild Join",
 		Description: fmt.Sprintf("%s (%d)", guild.Name, guild.ID),
 		Color:       config.EmbedSuccessColor,
 		Timestamp:   time.Now().Format(time.RFC3339),
-	})
+	}
+	embed.Footer = &discordgo.MessageEmbedFooter{
+		Text: strconv.Itoa(len(common.State.Guilds)),
+	}
+
+	_, err = common.Session.ChannelMessageSendEmbed(config.GuildsChannel.GetInt64(), embed)
 	if err != nil {
 		return
 	}
@@ -92,12 +98,17 @@ func HandleGuildCreate(event *EventData) (err error) {
 func HandleGuildDelete(event *EventData) (err error) {
 	guild := event.GuildDelete()
 
-	_, err = common.Session.ChannelMessageSendEmbed(config.EmbedErrorColor, &discordgo.MessageEmbed{
+	embed := &discordgo.MessageEmbed{
 		Title:       "Guild Leave",
 		Description: fmt.Sprintf("%s (%d)", guild.Name, guild.ID),
 		Color:       config.EmbedErrorColor,
 		Timestamp:   time.Now().Format(time.RFC3339),
-	})
+	}
+	embed.Footer = &discordgo.MessageEmbedFooter{
+		Text: strconv.Itoa(len(common.State.Guilds)),
+	}
+
+	_, err = common.Session.ChannelMessageSendEmbed(config.EmbedErrorColor, embed)
 
 	err = CollectEvent(event)
 
