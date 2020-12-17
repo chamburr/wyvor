@@ -136,7 +136,19 @@ pub fn get_redirect_uri(conn: &RedisConn, redirect: Option<String>) -> ApiResult
 pub fn get_invite_uri(guild: Option<u64>) -> ApiResult<String> {
     let client = OAUTH_CLIENT.read().unwrap().clone().unwrap();
     let mut uri = client.bot_authorization_url();
-    uri.permissions(Permissions::ADMINISTRATOR);
+    uri.permissions(
+        Permissions::ADMINISTRATOR
+            | Permissions::VIEW_CHANNEL
+            | Permissions::SEND_MESSAGES
+            | Permissions::EMBED_LINKS
+            | Permissions::ATTACH_FILES
+            | Permissions::READ_MESSAGE_HISTORY
+            | Permissions::ADD_REACTIONS
+            | Permissions::CONNECT
+            | Permissions::SPEAK
+            | Permissions::USE_VAD
+            | Permissions::PRIORITY_SPEAKER,
+    );
     uri.redirect_uri(client.redirect_uris()[0].as_str())?;
 
     if let Some(guild) = guild {
