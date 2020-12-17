@@ -362,7 +362,7 @@ impl User {
         if config
             .guild_roles
             .iter()
-            .any(|role| member.roles.contains(role))
+            .any(|role| *role as u64 == guild || member.roles.contains(role))
         {
             return Ok(());
         }
@@ -396,7 +396,7 @@ impl User {
         if config
             .playlist_roles
             .iter()
-            .any(|role| member.roles.contains(role))
+            .any(|role| *role as u64 == guild || member.roles.contains(role))
         {
             return Ok(());
         }
@@ -420,7 +420,7 @@ impl User {
         if config
             .player_roles
             .iter()
-            .any(|role| member.roles.contains(role))
+            .any(|role| *role as u64 == guild || member.roles.contains(role))
         {
             return Ok(());
         }
@@ -444,7 +444,7 @@ impl User {
         if config
             .queue_roles
             .iter()
-            .any(|role| member.roles.contains(role))
+            .any(|role| *role as u64 == guild || member.roles.contains(role))
         {
             return Ok(());
         }
@@ -468,7 +468,7 @@ impl User {
         if config
             .track_roles
             .iter()
-            .any(|role| member.roles.contains(role))
+            .any(|role| *role as u64 == guild || member.roles.contains(role))
         {
             return Ok(());
         }
