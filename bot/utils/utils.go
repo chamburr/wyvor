@@ -169,7 +169,7 @@ func BotHasPermission(guild *dstate.GuildState, channel *dstate.ChannelState, pe
 		}
 	}
 
-	return false
+	return true
 }
 
 func WaitConnect(guild *dstate.GuildState) *discordgo.VoiceState {
