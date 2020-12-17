@@ -2,8 +2,8 @@ package events
 
 import (
 	"fmt"
-	"time"
 	"strconv"
+	"time"
 
 	"github.com/chamburr/wyvor/common"
 	"github.com/chamburr/wyvor/config"
@@ -65,7 +65,7 @@ func HandleGuildCreate(event *EventData) (err error) {
 		Timestamp:   time.Now().Format(time.RFC3339),
 	}
 	embed.Footer = &discordgo.MessageEmbedFooter{
-		Text: fmt.Sprintf("%s", strconv.Itoa(len(common.State.Guilds))),
+		Text: strconv.Itoa(len(common.State.Guilds)),
 	}
 
 	_, err = common.Session.ChannelMessageSendEmbed(config.GuildsChannel.GetInt64(), embed)
@@ -105,7 +105,7 @@ func HandleGuildDelete(event *EventData) (err error) {
 		Timestamp:   time.Now().Format(time.RFC3339),
 	}
 	embed.Footer = &discordgo.MessageEmbedFooter{
-		Text: fmt.Sprintf("%s", strconv.Itoa(len(common.State.Guilds))),
+		Text: strconv.Itoa(len(common.State.Guilds)),
 	}
 
 	_, err = common.Session.ChannelMessageSendEmbed(config.EmbedErrorColor, embed)
