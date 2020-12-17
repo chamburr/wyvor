@@ -8,10 +8,10 @@ import (
 func CollectGatewayEvent(event *events.EventData) (err error) {
 	switch event.Type {
 	case events.EventGuildCreate:
-		DiscordGuildEvents.With(prometheus.Labels{"type": "Join"})
+		DiscordGuildEvents.With(prometheus.Labels{"type": "Join"}).Inc()
 		break
 	case events.EventGuildDelete:
-		DiscordGuildEvents.With(prometheus.Labels{"type": "Leave"})
+		DiscordGuildEvents.With(prometheus.Labels{"type": "Leave"}).Inc()
 		break
 	}
 
