@@ -24,6 +24,7 @@ func Init() {
 	command.Register(admin.TopServersCommand)
 	command.Register(admin.UnbanUserCommand)
 
+	command.Register(general.CommandsCommand)
 	command.Register(general.DashboardCommand)
 	command.Register(general.HelpCommand)
 	command.Register(general.InviteCommand)

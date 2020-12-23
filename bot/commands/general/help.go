@@ -12,7 +12,7 @@ import (
 
 var HelpCommand = &command.Command{
 	Name:    "help",
-	Aliases: []string{"about", "info", "commands"},
+	Aliases: []string{"about", "info"},
 	AllowDM: true,
 	Run: func(data *command.CommandData) (res interface{}, err error) {
 		embed := utils.DefaultEmbed(data.Guild)

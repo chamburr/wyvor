@@ -4,7 +4,13 @@
 
 Show the help menu.
 
-- Alias: about, info, commands
+- Alias: about, info
+
+## commands
+
+Get a link to the commands page.
+
+- Alias: c
 
 ## ping
 
