@@ -8,7 +8,7 @@ dashboard, custom effects and more! Learn more about the bot on the home page.
 Use .help to get started with Wyvor! The command list can be found on the commands page. We also
 recommend you to use our feature-rich and intuitive dashboard for the best experience.
 
-# Is there any Wyvor premium plans?
+# Are there any Wyvor premium plans?
 
 Yes, scroll down to the footer.
 
@@ -28,7 +28,7 @@ You can do this through the dashboard settings.
 
 We support YouTube, SoundCloud, Bandcamp, Vimeo, Twitch streams, files and HTTP URLs.
 
-Why don't you support Spotify? Well, other bots which falsely claims to "support" Spotify only
+Why don't you support Spotify? Well, other bots which falsely claim to "support" Spotify only
 searches the track there, but actually plays from other platforms like YouTube. For legal reasons,
 we cannot play tracks from Spotify.
 
