@@ -108,7 +108,7 @@ jobs:
           command: go build
       - run:
           name: "Go: Format"
-          command: ! go fmt ./... 2>&1 | read
+          command: "! go fmt ./... 2>&1 | read"
       - run:
           name: "Go: Lint"
           command: go vet ./...
