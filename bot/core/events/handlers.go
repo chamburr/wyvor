@@ -62,8 +62,8 @@ func HandleGuildCreate(event *EventData) (err error) {
 		Description: fmt.Sprintf("%s (%d)", guild.Name, guild.ID),
 		Color:       config.EmbedSuccessColor,
 		Timestamp:   time.Now().Format(time.RFC3339),
-		Footer:      &discordgo.MessageEmbedFooter{
-			Text: fmt.Sprintf("%d servers", len(common.State.Guilds) + 1),
+		Footer: &discordgo.MessageEmbedFooter{
+			Text: fmt.Sprintf("%d servers", len(common.State.Guilds)+1),
 		},
 	}
 
