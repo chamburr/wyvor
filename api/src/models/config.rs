@@ -2,15 +2,16 @@ use crate::constants::{
     GUILD_PREFIX_MAX, GUILD_PREFIX_MIN, GUILD_QUEUE_MAX, GUILD_QUEUE_MIN, GUILD_ROLES_MAX,
 };
 use crate::db::schema::config;
-use crate::models::{
-    check_duplicate, string_int_opt, string_int_opt_vec, UpdateExt, Validate, ValidateExt,
-};
+use crate::db::PgPool;
+use crate::models::{check_duplicate, string_int_opt, string_int_opt_vec, Validate, ValidateExt};
 use crate::routes::ApiResult;
 
+use actix_web::web::block;
 use diesel::prelude::*;
+use diesel::result::Error::QueryBuilderError;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Deserialize, Serialize, Queryable, Identifiable)]
+#[derive(Debug, Deserialize, Serialize, Queryable, Identifiable)]
 #[table_name = "config"]
 pub struct Config {
     pub id: i64,
@@ -28,7 +29,7 @@ pub struct Config {
     pub queue_log: i64,
 }
 
-#[derive(Debug, Clone, Deserialize, Insertable)]
+#[derive(Debug, Deserialize, Insertable)]
 #[table_name = "config"]
 pub struct NewConfig {
     pub id: i64,
@@ -119,28 +120,74 @@ impl Validate for EditConfig {
     }
 }
 
-pub fn create(conn: &PgConnection, new_config: &NewConfig) -> QueryResult<Config> {
-    diesel::insert_into(config::table)
-        .values(new_config)
-        .on_conflict_do_nothing()
-        .get_result(conn)
+pub async fn create(pool: &PgPool, new_config: NewConfig) -> ApiResult<Config> {
+    let pool = pool.clone();
+
+    Ok(block(move || -> ApiResult<Config> {
+        let conn = pool.get()?;
+        let res = diesel::insert_into(config::table)
+            .values(new_config)
+            .on_conflict_do_nothing()
+            .get_result(&*conn)?;
+
+        Ok(res)
+    })
+    .await?)
 }
 
-pub fn update(conn: &PgConnection, id: i64, edit_config: &EditConfig) -> QueryResult<usize> {
-    diesel::update(config::table.find(id))
-        .set(edit_config)
-        .execute(conn)
-        .safely()
+pub async fn update(pool: &PgPool, id: i64, edit_config: EditConfig) -> ApiResult<usize> {
+    let pool = pool.clone();
+
+    Ok(block(move || -> ApiResult<usize> {
+        let conn = pool.get()?;
+        let res = diesel::update(config::table.find(id))
+            .set(edit_config)
+            .execute(&*conn)
+            .or_else(|err| {
+                if let QueryBuilderError(_) = err {
+                    Ok(0)
+                } else {
+                    Err(err)
+                }
+            })?;
+
+        Ok(res)
+    })
+    .await?)
 }
 
-pub fn delete(conn: &PgConnection, id: i64) -> QueryResult<usize> {
-    diesel::delete(config::table.find(id)).execute(conn)
+pub async fn delete(pool: &PgPool, id: i64) -> ApiResult<usize> {
+    let pool = pool.clone();
+
+    Ok(block(move || -> ApiResult<usize> {
+        let conn = pool.get()?;
+        let res = diesel::delete(config::table.find(id)).execute(&*conn)?;
+
+        Ok(res)
+    })
+    .await?)
 }
 
-pub fn find(conn: &PgConnection, id: i64) -> QueryResult<Config> {
-    config::table.find(id).first(conn)
+pub async fn find(pool: &PgPool, id: i64) -> ApiResult<Option<Config>> {
+    let pool = pool.clone();
+
+    Ok(block(move || -> ApiResult<Option<Config>> {
+        let conn = pool.get()?;
+        let res = config::table.find(id).first(&*conn).optional()?;
+
+        Ok(res)
+    })
+    .await?)
 }
 
-pub fn all(conn: &PgConnection) -> QueryResult<Vec<Config>> {
-    config::table.load(conn)
+pub async fn all(pool: &PgPool) -> ApiResult<Vec<Config>> {
+    let pool = pool.clone();
+
+    Ok(block(move || -> ApiResult<Vec<Config>> {
+        let conn = pool.get()?;
+        let res = config::table.load(&*conn)?;
+
+        Ok(res)
+    })
+    .await?)
 }

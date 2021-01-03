@@ -1,7 +1,5 @@
 use crate::routes::{ApiResponse, ApiResult};
 
-use diesel::result::Error::QueryBuilderError;
-use diesel::QueryResult;
 use serde::{de, Deserialize, Deserializer};
 use std::cmp::PartialOrd;
 use std::collections::HashSet;
@@ -28,11 +26,12 @@ pub trait ValidateExt<T> {
     fn check_btw(&self, min: T, max: T, name: &str) -> ApiResult<()>;
 }
 
-impl<T: num::Num + Display, U: PartialOrd<T>> ValidateExt<T> for U {
+impl<T: Display, U: PartialOrd<T>> ValidateExt<T> for U {
     fn check_min(&self, num: T, name: &str) -> ApiResult<()> {
         if self.lt(&num) {
             Err(ApiResponse::bad_request()
-                .message(format!("The {} should be above {}.", &name, &num).as_str()))
+                .message(format!("The {} should be above {}.", &name, &num).as_str())
+                .into())
         } else {
             Ok(())
         }
@@ -41,7 +40,8 @@ impl<T: num::Num + Display, U: PartialOrd<T>> ValidateExt<T> for U {
     fn check_max(&self, num: T, name: &str) -> ApiResult<()> {
         if self.gt(&num) {
             Err(ApiResponse::bad_request()
-                .message(format!("The {} should be below {}.", &name, &num).as_str()))
+                .message(format!("The {} should be below {}.", &name, &num).as_str())
+                .into())
         } else {
             Ok(())
         }
@@ -49,35 +49,22 @@ impl<T: num::Num + Display, U: PartialOrd<T>> ValidateExt<T> for U {
 
     fn check_btw(&self, min: T, max: T, name: &str) -> ApiResult<()> {
         if self.lt(&min) || self.gt(&max) {
-            Err(ApiResponse::bad_request().message(
-                format!("The {} should be between {} and {}.", &name, &min, &max).as_str(),
-            ))
+            Err(ApiResponse::bad_request()
+                .message(format!("The {} should be between {} and {}.", &name, &min, &max).as_str())
+                .into())
         } else {
             Ok(())
         }
     }
 }
 
-pub trait UpdateExt {
-    fn safely(self) -> QueryResult<usize>;
-}
-
-impl UpdateExt for QueryResult<usize> {
-    fn safely(self) -> QueryResult<usize> {
-        if let Err(QueryBuilderError(_)) = &self {
-            return Ok(0);
-        }
-
-        self
-    }
-}
-
-pub fn check_duplicate<T: Clone + Hash + Eq>(items: &[T], name: &str) -> ApiResult<()> {
-    let items_set: HashSet<T> = items.iter().cloned().collect();
+pub fn check_duplicate<T: Hash + Eq>(items: &[T], name: &str) -> ApiResult<()> {
+    let items_set: HashSet<&T> = items.iter().collect();
 
     if items_set.len() != items.len() {
         Err(ApiResponse::bad_request()
-            .message(format!("The {} cannot contain duplicates.", &name).as_str()))
+            .message(format!("The {} cannot contain duplicates.", &name).as_str())
+            .into())
     } else {
         Ok(())
     }
@@ -86,7 +73,7 @@ pub fn check_duplicate<T: Clone + Hash + Eq>(items: &[T], name: &str) -> ApiResu
 pub fn string_int<'de, T, D>(deserializer: D) -> Result<T, D::Error>
 where
     D: Deserializer<'de>,
-    T: FromStr + serde::Deserialize<'de>,
+    T: FromStr + Deserialize<'de>,
     <T as FromStr>::Err: Display,
 {
     #[derive(Deserialize)]
@@ -105,7 +92,7 @@ where
 pub fn string_int_opt<'de, T, D>(deserializer: D) -> Result<Option<T>, D::Error>
 where
     D: Deserializer<'de>,
-    T: FromStr + serde::Deserialize<'de>,
+    T: FromStr + Deserialize<'de>,
     <T as FromStr>::Err: Display,
 {
     #[derive(Deserialize)]
@@ -127,7 +114,7 @@ where
 pub fn string_int_opt_vec<'de, T, D>(deserializer: D) -> Result<Option<Vec<T>>, D::Error>
 where
     D: Deserializer<'de>,
-    T: FromStr + serde::Deserialize<'de>,
+    T: FromStr + Deserialize<'de>,
     <T as FromStr>::Err: Display,
 {
     #[derive(Deserialize)]

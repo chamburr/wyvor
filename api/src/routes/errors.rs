@@ -1,36 +1,45 @@
-use crate::routes::ApiResponse;
+use crate::routes::{ApiResponse, ApiResult};
 
-#[catch(400)]
-pub fn bad_request() -> ApiResponse {
-    ApiResponse::bad_request()
+use actix_web::body::Body;
+use actix_web::dev::ServiceResponse;
+use actix_web::middleware::errhandlers::ErrorHandlerResponse;
+use actix_web::web::HttpResponse;
+use actix_web::Result;
+
+fn respond_error<B>(res: ServiceResponse<B>, response: ApiResponse) -> ErrorHandlerResponse<Body> {
+    let response = HttpResponse::build(response.status).json(response.data);
+
+    ErrorHandlerResponse::Response(res.into_response(response))
 }
 
-#[catch(401)]
-pub fn unauthorized() -> ApiResponse {
-    ApiResponse::unauthorized()
+pub fn bad_request<B>(res: ServiceResponse<B>) -> Result<ErrorHandlerResponse<Body>> {
+    Ok(respond_error(res, ApiResponse::bad_request()))
 }
 
-#[catch(403)]
-pub fn forbidden() -> ApiResponse {
-    ApiResponse::forbidden()
+pub fn unauthorized<B>(res: ServiceResponse<B>) -> Result<ErrorHandlerResponse<Body>> {
+    Ok(respond_error(res, ApiResponse::bad_request()))
 }
 
-#[catch(404)]
-pub fn not_found() -> ApiResponse {
-    ApiResponse::not_found()
+pub fn forbidden<B>(res: ServiceResponse<B>) -> Result<ErrorHandlerResponse<Body>> {
+    Ok(respond_error(res, ApiResponse::forbidden()))
 }
 
-#[catch(422)]
-pub fn unprocessable_entity() -> ApiResponse {
-    ApiResponse::bad_request()
+pub fn not_found<B>(res: ServiceResponse<B>) -> Result<ErrorHandlerResponse<Body>> {
+    Ok(respond_error(res, ApiResponse::not_found()))
 }
 
-#[catch(500)]
-pub fn internal_server_error() -> ApiResponse {
-    ApiResponse::internal_server_error()
+pub fn request_timeout<B>(res: ServiceResponse<B>) -> Result<ErrorHandlerResponse<Body>> {
+    Ok(respond_error(res, ApiResponse::request_timeout()))
 }
 
-#[catch(503)]
-pub fn service_unavailable() -> ApiResponse {
-    ApiResponse::service_unavailable()
+pub fn internal_server_error<B>(res: ServiceResponse<B>) -> Result<ErrorHandlerResponse<Body>> {
+    Ok(respond_error(res, ApiResponse::internal_server_error()))
+}
+
+pub fn service_unavailable<B>(res: ServiceResponse<B>) -> Result<ErrorHandlerResponse<Body>> {
+    Ok(respond_error(res, ApiResponse::service_unavailable()))
+}
+
+pub async fn default_service() -> ApiResult<ApiResponse> {
+    ApiResponse::not_found().finish()
 }

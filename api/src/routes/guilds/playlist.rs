@@ -1,24 +1,25 @@
 use crate::constants::PLAYLIST_MAX;
-use crate::db::{cache, PgConn, RedisConn};
+use crate::db::{cache, PgPool, RedisPool};
 use crate::models::playlist::{self, EditPlaylist, NewPlaylist};
 use crate::models::playlist_item::{self, NewPlaylistItem, PlaylistItem};
 use crate::models::Validate;
-use crate::routes::{ApiResponse, ApiResult};
+use crate::routes::{ApiResponse, ApiResult, OptionExt};
 use crate::utils::auth::User;
 use crate::utils::log::{self, LogInfo};
 use crate::utils::polling;
-use crate::utils::queue::{Queue, QueueItem};
+use crate::utils::queue::{self, QueueItem};
 
+use actix_web::web::{Data, Json, Path};
+use actix_web::{delete, get, patch, post};
 use chrono::NaiveDateTime;
-use rocket_contrib::json::Json;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct SimplePlaylist {
     pub name: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Serialize)]
 pub struct FullPlaylist {
     pub id: i64,
     pub guild: i64,
@@ -28,195 +29,218 @@ pub struct FullPlaylist {
     pub items: Vec<PlaylistItem>,
 }
 
-#[get("/<id>/playlists")]
-pub fn get_guild_playlists(
-    conn: PgConn,
-    redis_conn: RedisConn,
+#[get("/{id}/playlists")]
+pub async fn get_guild_playlists(
     user: User,
-    id: u64,
-) -> ApiResponse {
-    user.has_read_guild(&redis_conn, id)?;
+    pool: Data<PgPool>,
+    redis_pool: Data<RedisPool>,
+    Path(id): Path<u64>,
+) -> ApiResult<ApiResponse> {
+    user.has_read_guild(&redis_pool, id).await?;
 
-    let playlists = playlist::find_by_guild(&*conn, id as i64)?
-        .iter()
-        .map(|playlist| {
-            Ok(FullPlaylist {
-                id: playlist.id,
-                guild: playlist.guild,
-                name: playlist.name.clone(),
-                author: playlist.author,
-                created_at: playlist.created_at,
-                items: playlist_item::find_by_playlist(&*conn, playlist.id)?,
-            })
-        })
-        .collect::<ApiResult<Vec<FullPlaylist>>>()?;
+    let mut playlists = vec![];
+    for playlist in playlist::find_by_guild(&pool, id as i64).await? {
+        let playlist = FullPlaylist {
+            id: playlist.id,
+            guild: playlist.guild,
+            name: playlist.name,
+            author: playlist.author,
+            created_at: playlist.created_at,
+            items: playlist_item::find_by_playlist(&pool, playlist.id).await?,
+        };
+        playlists.push(playlist);
+    }
 
-    ApiResponse::ok().data(playlists)
+    ApiResponse::ok().data(playlists).finish()
 }
 
-#[post("/<id>/playlists", data = "<new_playlist>")]
-pub fn post_guild_playlists(
-    conn: PgConn,
-    redis_conn: RedisConn,
+#[post("/{id}/playlists")]
+pub async fn post_guild_playlists(
     user: User,
-    id: u64,
-    new_playlist: Json<SimplePlaylist>,
-) -> ApiResponse {
-    user.has_manage_playlist(&*conn, &redis_conn, id)?;
+    pool: Data<PgPool>,
+    redis_pool: Data<RedisPool>,
+    Path(id): Path<u64>,
+    Json(new_playlist): Json<SimplePlaylist>,
+) -> ApiResult<ApiResponse> {
+    user.has_manage_playlist(&pool, &redis_pool, id).await?;
 
-    let playlists = playlist::find_by_guild(&*conn, id as i64)?;
-    let queue = Queue::from(&redis_conn, id).get()?;
+    let playlists = playlist::find_by_guild(&pool, id as i64).await?;
+    let tracks = queue::get(&redis_pool, id).await?;
     let new_playlist = NewPlaylist {
         guild: id as i64,
         author: user.user.id,
-        name: new_playlist.into_inner().name,
+        name: new_playlist.name,
     };
 
     new_playlist.check()?;
 
     if playlists.len() >= PLAYLIST_MAX {
         return ApiResponse::bad_request()
-            .message("This server has reached the maximum number of playlists.");
+            .message("This server has reached the maximum number of playlists.")
+            .finish();
     }
 
     if playlists
         .iter()
         .any(|playlist| playlist.name.to_lowercase() == new_playlist.name.to_lowercase())
     {
-        return ApiResponse::bad_request().message("A playlist with the same name already exists.");
+        return ApiResponse::bad_request()
+            .message("A playlist with the same name already exists.")
+            .finish();
     }
 
-    if queue.is_empty() {
-        return ApiResponse::bad_request().message("There are no tracks in the queue currently.");
+    if tracks.is_empty() {
+        return ApiResponse::bad_request()
+            .message("There are no tracks in the queue currently.")
+            .finish();
     }
 
-    let playlist = playlist::create(&*conn, &new_playlist)?;
-    let tracks: Vec<NewPlaylistItem> = queue
-        .iter()
-        .map(|item| NewPlaylistItem {
-            playlist: playlist.id,
-            track: item.track.clone(),
-            title: item.title.clone(),
-            uri: item.uri.clone(),
-            length: item.length,
-        })
-        .collect();
+    let playlist = playlist::create(&pool, new_playlist.clone()).await?;
 
     for track in tracks {
-        playlist_item::create(&*conn, &track)?;
+        let item = NewPlaylistItem {
+            playlist: playlist.id,
+            track: track.track,
+            title: track.title,
+            uri: track.uri,
+            length: track.length,
+        };
+        playlist_item::create(&pool, item).await?;
     }
 
     log::register(
-        &*conn,
-        &redis_conn,
+        &pool,
+        &redis_pool,
         id,
         user,
         LogInfo::PlaylistAdd(new_playlist),
-    )?;
+    )
+    .await?;
 
-    ApiResponse::ok()
+    ApiResponse::ok().finish()
 }
 
-#[patch("/<id>/playlists/<item>", data = "<new_playlist>")]
-pub fn patch_guild_playlist(
-    conn: PgConn,
-    redis_conn: RedisConn,
+#[patch("/{id}/playlists/{item}")]
+pub async fn patch_guild_playlist(
     user: User,
-    id: u64,
-    item: u64,
-    new_playlist: Json<EditPlaylist>,
-) -> ApiResponse {
-    user.has_manage_playlist(&*conn, &redis_conn, id)?;
+    pool: Data<PgPool>,
+    redis_pool: Data<RedisPool>,
+    Path((id, item)): Path<(u64, u64)>,
+    Json(new_playlist): Json<EditPlaylist>,
+) -> ApiResult<ApiResponse> {
+    user.has_manage_playlist(&pool, &redis_pool, id).await?;
 
-    let new_playlist = new_playlist.into_inner();
-    playlist::find(&*conn, item as i64)?;
+    playlist::find(&pool, item as i64).await?;
     new_playlist.check()?;
 
-    if let Some(name) = new_playlist.name.clone() {
-        if playlist::find_by_guild(&*conn, id as i64)?
+    if let Some(name) = &new_playlist.name {
+        if playlist::find_by_guild(&pool, id as i64)
+            .await?
             .iter()
-            .any(|playlist| playlist.name.to_lowercase() == name)
+            .any(|playlist| playlist.name.to_lowercase().as_str() == name)
         {
             return ApiResponse::bad_request()
-                .message("A playlist with the same name already exists.");
+                .message("A playlist with the same name already exists.")
+                .finish();
         }
     }
 
-    playlist::update(&*conn, item as i64, &new_playlist)?;
+    playlist::update(&pool, item as i64, new_playlist.clone()).await?;
 
     log::register(
-        &*conn,
-        &redis_conn,
+        &pool,
+        &redis_pool,
         id,
         user,
         LogInfo::PlaylistUpdate(new_playlist),
-    )?;
+    )
+    .await?;
 
-    ApiResponse::ok()
+    ApiResponse::ok().finish()
 }
 
-#[delete("/<id>/playlists/<item>")]
-pub fn delete_guild_playlist(
-    conn: PgConn,
-    redis_conn: RedisConn,
+#[delete("/{id}/playlists/{item}")]
+pub async fn delete_guild_playlist(
     user: User,
-    id: u64,
-    item: u64,
-) -> ApiResponse {
-    user.has_manage_playlist(&*conn, &redis_conn, id)?;
+    pool: Data<PgPool>,
+    redis_pool: Data<RedisPool>,
+    Path((id, item)): Path<(u64, u64)>,
+) -> ApiResult<ApiResponse> {
+    user.has_manage_playlist(&pool, &redis_pool, id).await?;
 
-    let playlist = playlist::find(&*conn, item as i64)?;
-    playlist_item::delete_by_playlist(&*conn, item as i64)?;
-    playlist::delete(&*conn, item as i64)?;
+    let playlist = playlist::find(&pool, item as i64).await?.or_not_found()?;
+    playlist_item::delete_by_playlist(&pool, item as i64).await?;
+    playlist::delete(&pool, item as i64).await?;
 
     log::register(
-        &*conn,
-        &redis_conn,
+        &pool,
+        &redis_pool,
         id,
         user,
         LogInfo::PlaylistRemove(playlist),
-    )?;
+    )
+    .await?;
 
-    ApiResponse::ok()
+    ApiResponse::ok().finish()
 }
 
-#[post("/<id>/playlists/<item>/load")]
-pub fn post_guild_playlist_load(
-    conn: PgConn,
-    redis_conn: RedisConn,
+#[post("/{id}/playlists/{item}/load")]
+pub async fn post_guild_playlist_load(
     user: User,
-    id: u64,
-    item: u64,
-) -> ApiResponse {
-    user.has_manage_track(&*conn, &redis_conn, id)?;
-    user.is_connected(&redis_conn, id, true)?;
+    pool: Data<PgPool>,
+    redis_pool: Data<RedisPool>,
+    Path((id, item)): Path<(u64, u64)>,
+) -> ApiResult<ApiResponse> {
+    user.has_manage_track(&pool, &redis_pool, id).await?;
+    user.is_connected(&redis_pool, id, true).await?;
 
-    let playlist = playlist::find(&*conn, item as i64)?;
-    let tracks = playlist_item::find_by_playlist(&*conn, item as i64)?;
-    let config = cache::get_config(&*conn, &redis_conn, id)?;
-    let queue = Queue::from(&redis_conn, id);
+    let playlist = playlist::find(&pool, item as i64).await?.or_not_found()?;
+    let tracks = playlist_item::find_by_playlist(&pool, item as i64).await?;
+    let config = cache::get_config(&pool, &redis_pool, id).await?;
+    let amount = tracks.len();
 
-    if config.max_queue as usize - queue.len()? < tracks.len() {
-        return ApiResponse::bad_request().message("The queue is already at maximum length.");
+    if config.max_queue as usize - queue::len(&redis_pool, id).await? < amount {
+        return ApiResponse::bad_request()
+            .message("The queue is already at maximum length.")
+            .finish();
     }
 
-    for track in tracks.clone() {
-        if config.no_duplicate && queue.get()?.iter().any(|item| item.track == track.track) {
+    for track in tracks {
+        if config.no_duplicate
+            && queue::get(&redis_pool, id)
+                .await?
+                .iter()
+                .any(|item| item.track == track.track)
+        {
             continue;
         }
 
-        queue.add(&QueueItem::from((track, user.user.clone())))?;
+        queue::add(
+            &redis_pool,
+            id,
+            QueueItem {
+                track: track.track,
+                title: track.title,
+                uri: track.uri,
+                length: track.length,
+                author: user.user.id,
+                username: user.user.username.clone(),
+                discriminator: user.user.discriminator,
+            },
+        )
+        .await?;
     }
 
     log::register(
-        &*conn,
-        &redis_conn,
+        &pool,
+        &redis_pool,
         id,
         user,
-        LogInfo::PlaylistLoad(playlist, tracks),
-    )?;
+        LogInfo::PlaylistLoad(playlist, amount as u64),
+    )
+    .await?;
 
-    polling::notify(id);
+    polling::notify(id)?;
 
-    ApiResponse::ok()
+    ApiResponse::ok().finish()
 }

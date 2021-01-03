@@ -1,53 +1,60 @@
-use crate::db::{cache, PgConn, RedisConn};
-use crate::routes::{ApiResponse, OptionExt};
+use crate::db::{cache, PgPool, RedisPool};
+use crate::routes::{ApiResponse, ApiResult, OptionExt};
 use crate::utils::auth::User;
 use crate::utils::log::{self, LogInfo};
-use crate::utils::player::{decode_track, get_client, ClientExt};
-use crate::utils::polling;
-use crate::utils::queue::{Queue, QueueItem};
+use crate::utils::player::{decode_track, get_player};
+use crate::utils::queue::{self, QueueItem};
+use crate::utils::{player, polling};
 
+use actix_web::web::{Data, Json, Path};
+use actix_web::{delete, get, post, put};
 use percent_encoding::{percent_encode, NON_ALPHANUMERIC};
-use rocket_contrib::json::Json;
 use serde::Deserialize;
 use twilight_andesite::model::Stop;
 use twilight_model::id::GuildId;
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct SimpleQueueItem {
     pub track: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct SimplePosition {
     pub position: u32,
 }
 
-#[get("/<id>/queue")]
-pub fn get_guild_queue(redis_conn: RedisConn, user: User, id: u64) -> ApiResponse {
-    user.has_read_guild(&redis_conn, id)?;
-    user.is_connected(&redis_conn, id, false)?;
+#[get("/{id}/queue")]
+pub async fn get_guild_queue(
+    user: User,
+    redis_pool: Data<RedisPool>,
+    Path(id): Path<u64>,
+) -> ApiResult<ApiResponse> {
+    user.has_read_guild(&redis_pool, id).await?;
+    user.is_connected(&redis_pool, id, false).await?;
 
-    let queue = Queue::from(&redis_conn, id).get()?;
+    let tracks = queue::get(&redis_pool, id).await?;
 
-    ApiResponse::ok().data(queue)
+    ApiResponse::ok().data(tracks).finish()
 }
 
-#[post("/<id>/queue", data = "<item>")]
-pub fn post_guild_queue(
-    conn: PgConn,
-    redis_conn: RedisConn,
+#[post("/{id}/queue")]
+pub async fn post_guild_queue(
     user: User,
-    id: u64,
-    item: Json<SimpleQueueItem>,
-) -> ApiResponse {
-    user.has_manage_track(&*conn, &redis_conn, id)?;
-    user.is_connected(&redis_conn, id, true)?;
+    pool: Data<PgPool>,
+    redis_pool: Data<RedisPool>,
+    Path(id): Path<u64>,
+    Json(item): Json<SimpleQueueItem>,
+) -> ApiResult<ApiResponse> {
+    user.has_manage_track(&pool, &redis_pool, id).await?;
+    user.is_connected(&redis_pool, id, true).await?;
 
-    let queue = Queue::from(&redis_conn, id);
-    let config = cache::get_config(&*conn, &redis_conn, id)?;
+    let config = cache::get_config(&pool, &redis_pool, id).await?;
+    let tracks = queue::get(&redis_pool, id).await?;
 
-    if queue.len()? >= config.max_queue as usize {
-        return ApiResponse::bad_request().message("The queue is already at maximum length.");
+    if tracks.len() >= config.max_queue as usize {
+        return ApiResponse::bad_request()
+            .message("The queue is already at maximum length.")
+            .finish();
     }
 
     let track = {
@@ -56,144 +63,161 @@ pub fn post_guild_queue(
                 .to_string()
                 .as_str(),
         )
+        .await
         .map_err(|_| {
             ApiResponse::bad_request().message("The requested track could not be found.")
         })?;
 
-        QueueItem::from((decoded_track, user.user.clone()))
+        QueueItem {
+            track: decoded_track.track,
+            title: decoded_track.info.title,
+            uri: decoded_track.info.uri,
+            length: decoded_track.info.length as i32,
+            author: user.user.id,
+            username: user.user.username.clone(),
+            discriminator: user.user.discriminator,
+        }
     };
 
-    if config.no_duplicate && queue.get()?.iter().any(|item| item.track == track.track) {
+    if config.no_duplicate && tracks.iter().any(|item| item.track == track.track) {
         return ApiResponse::bad_request()
-            .message("Duplicated tracks are not allowed in this server.");
+            .message("Duplicated tracks are not allowed in this server.")
+            .finish();
     }
 
-    queue.add(&track)?;
+    queue::add(&redis_pool, id, track.clone()).await?;
 
-    let client = get_client();
-    let player = client.get_player(&redis_conn, id)?;
-    if player.position().is_none() {
-        queue.set_playing(queue.get()?.len() as i32 - 1)?;
-        queue.play_with(&player)?;
+    let player = get_player(&redis_pool, id).await?;
+    if player.position.is_none() {
+        queue::set_playing(&redis_pool, id, tracks.len() as i32).await?;
+        queue::play(&redis_pool, id).await?;
     }
 
-    log::register(&*conn, &redis_conn, id, user, LogInfo::QueueAdd(track))?;
+    log::register(&pool, &redis_pool, id, user, LogInfo::QueueAdd(track)).await?;
 
-    polling::notify(id);
+    polling::notify(id)?;
 
-    ApiResponse::ok()
+    ApiResponse::ok().finish()
 }
 
-#[delete("/<id>/queue")]
-pub fn delete_guild_queue(conn: PgConn, redis_conn: RedisConn, user: User, id: u64) -> ApiResponse {
-    user.has_manage_queue(&*conn, &redis_conn, id)?;
-    user.is_connected(&redis_conn, id, true)?;
-
-    let client = get_client();
-    if let Ok(player) = client.get_player(&redis_conn, id) {
-        player.send(Stop::new(GuildId(id)))?;
-    }
-
-    let queue = Queue::from(&redis_conn, id).delete()?;
-
-    log::register(&*conn, &redis_conn, id, user, LogInfo::QueueClear(queue))?;
-
-    polling::notify(id);
-
-    ApiResponse::ok()
-}
-
-#[post("/<id>/queue/shuffle")]
-pub fn post_guild_queue_shuffle(
-    conn: PgConn,
-    redis_conn: RedisConn,
+#[delete("/{id}/queue")]
+pub async fn delete_guild_queue(
     user: User,
-    id: u64,
-) -> ApiResponse {
-    user.has_manage_queue(&*conn, &redis_conn, id)?;
-    user.is_connected(&redis_conn, id, true)?;
+    pool: Data<PgPool>,
+    redis_pool: Data<RedisPool>,
+    Path(id): Path<u64>,
+) -> ApiResult<ApiResponse> {
+    user.has_manage_queue(&pool, &redis_pool, id).await?;
+    user.is_connected(&redis_pool, id, true).await?;
 
-    Queue::from(&redis_conn, id).shuffle()?;
+    if get_player(&redis_pool, id).await.is_ok() {
+        player::send(Stop::new(GuildId(id))).await?;
+    }
 
-    log::register(&*conn, &redis_conn, id, user, LogInfo::QueueShuffle)?;
+    let tracks = queue::delete(&redis_pool, id).await?;
 
-    polling::notify(id);
+    log::register(&pool, &redis_pool, id, user, LogInfo::QueueClear(tracks)).await?;
 
-    ApiResponse::ok()
+    polling::notify(id)?;
+
+    ApiResponse::ok().finish()
 }
 
-#[put("/<id>/queue/<item>/position", data = "<new_position>")]
-pub fn put_guild_queue_item_position(
-    conn: PgConn,
-    redis_conn: RedisConn,
+#[post("/{id}/queue/shuffle")]
+pub async fn post_guild_queue_shuffle(
     user: User,
-    id: u64,
-    item: u32,
-    new_position: Json<SimplePosition>,
-) -> ApiResponse {
-    user.has_manage_queue(&*conn, &redis_conn, id)?;
-    user.is_connected(&redis_conn, id, true)?;
+    pool: Data<PgPool>,
+    redis_pool: Data<RedisPool>,
+    Path(id): Path<u64>,
+) -> ApiResult<ApiResponse> {
+    user.has_manage_queue(&pool, &redis_pool, id).await?;
+    user.is_connected(&redis_pool, id, true).await?;
 
-    let new_position = new_position.into_inner();
+    queue::shuffle(&redis_pool, id).await?;
 
-    let queue = Queue::from(&redis_conn, id);
-    let track = queue.get_track(item)?.into_not_found()?;
-    let playing = queue.get_playing()?;
+    log::register(&pool, &redis_pool, id, user, LogInfo::QueueShuffle).await?;
+
+    polling::notify(id)?;
+
+    ApiResponse::ok().finish()
+}
+
+#[put("/{id}/queue/{item}/position")]
+pub async fn put_guild_queue_item_position(
+    user: User,
+    pool: Data<PgPool>,
+    redis_pool: Data<RedisPool>,
+    Path((id, item)): Path<(u64, u32)>,
+    Json(new_position): Json<SimplePosition>,
+) -> ApiResult<ApiResponse> {
+    user.has_manage_queue(&pool, &redis_pool, id).await?;
+    user.is_connected(&redis_pool, id, true).await?;
+
+    let track = queue::get_track(&redis_pool, id, item as i32)
+        .await?
+        .or_not_found()?;
+    let playing = queue::get_playing(&redis_pool, id).await?;
 
     if playing == item as i32 || playing == new_position.position as i32 {
         return ApiResponse::bad_request()
-            .message("The position of the currently playing track cannot be changed.");
+            .message("The position of the currently playing track cannot be changed.")
+            .finish();
     }
 
-    if queue.len()? <= new_position.position as usize {
-        return ApiResponse::bad_request().message("The position to move the track to is invalid.");
+    if queue::len(&redis_pool, id).await? <= new_position.position as usize {
+        return ApiResponse::bad_request()
+            .message("The position to move the track to is invalid.")
+            .finish();
     }
 
-    Queue::from(&redis_conn, id).shift(item, new_position.position)?;
+    queue::shift(&redis_pool, id, item, new_position.position).await?;
 
     log::register(
-        &*conn,
-        &redis_conn,
+        &pool,
+        &redis_pool,
         id,
         user,
         LogInfo::QueueShift(track, new_position),
-    )?;
+    )
+    .await?;
 
-    polling::notify(id);
+    polling::notify(id)?;
 
-    ApiResponse::ok()
+    ApiResponse::ok().finish()
 }
 
-#[delete("/<id>/queue/<item>")]
-pub fn delete_guild_queue_item(
-    conn: PgConn,
-    redis_conn: RedisConn,
+#[delete("/{id}/queue/{item}")]
+pub async fn delete_guild_queue_item(
     user: User,
-    id: u64,
-    item: u32,
-) -> ApiResponse {
-    user.has_manage_queue(&*conn, &redis_conn, id)?;
-    user.is_connected(&redis_conn, id, true)?;
+    pool: Data<PgPool>,
+    redis_pool: Data<RedisPool>,
+    Path((id, item)): Path<(u64, u32)>,
+) -> ApiResult<ApiResponse> {
+    user.has_manage_queue(&pool, &redis_pool, id).await?;
+    user.is_connected(&redis_pool, id, true).await?;
 
-    let queue = Queue::from(&redis_conn, id);
-    queue.get_track(item)?.into_not_found()?;
+    queue::get_track(&redis_pool, id, item as i32)
+        .await?
+        .or_not_found()?;
 
-    if queue.get_playing()? == item as i32 {
+    if queue::get_playing(&redis_pool, id).await? == item as i32 {
         return ApiResponse::bad_request()
-            .message("The currently playing track cannot be removed.");
+            .message("The currently playing track cannot be removed.")
+            .finish();
     }
 
-    let removed_track = queue.remove(item)?;
+    let removed_track = queue::remove(&redis_pool, id, item).await?;
 
     log::register(
-        &*conn,
-        &redis_conn,
+        &pool,
+        &redis_pool,
         id,
         user,
         LogInfo::QueueRemove(removed_track),
-    )?;
+    )
+    .await?;
 
-    polling::notify(id);
+    polling::notify(id)?;
 
-    ApiResponse::ok()
+    ApiResponse::ok().finish()
 }

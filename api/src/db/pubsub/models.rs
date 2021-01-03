@@ -1,7 +1,7 @@
 use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct Guild {
     pub id: i64,
     pub name: String,
@@ -13,7 +13,7 @@ pub struct Guild {
     pub channels: Vec<Channel>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct Channel {
     pub id: i64,
     pub name: String,
@@ -22,7 +22,7 @@ pub struct Channel {
     pub parent: i64,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct Role {
     pub id: i64,
     pub name: String,
@@ -30,7 +30,7 @@ pub struct Role {
     pub position: i32,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct Member {
     pub id: i64,
     pub username: String,
@@ -41,18 +41,18 @@ pub struct Member {
     pub joined_at: NaiveDateTime,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct Permission {
     pub permission: i32,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct Connected {
     pub channel: i64,
     pub members: Vec<i64>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct VoiceUpdate {
     pub session: String,
     pub guild: i64,
@@ -60,7 +60,7 @@ pub struct VoiceUpdate {
     pub token: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct VoiceDestroy {
     pub guild: i64,
 }
