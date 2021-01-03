@@ -21,7 +21,7 @@ var NextCommand = &command.Command{
 		}
 
 		playing := utils.ToInt64(player["playing"])
-		if playing + 1 == int64(len(queue)) {
+		if playing+1 == int64(len(queue)) {
 			playing = -2
 		}
 
