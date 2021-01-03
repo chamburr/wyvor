@@ -2,11 +2,12 @@ package core
 
 import (
 	"fmt"
+	"net/http"
+	"net/url"
+
 	"github.com/chamburr/wyvor/core/api"
 	"github.com/chamburr/wyvor/core/command"
 	"github.com/chamburr/wyvor/utils"
-	"net/http"
-	"net/url"
 )
 
 var PlayCommand = &command.Command{
