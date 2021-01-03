@@ -108,10 +108,10 @@ jobs:
           command: go build
       - run:
           name: "Go: Format"
-          command: gofmt -s -l .
+          command: ! go fmt ./... 2>&1 | read
       - run:
           name: "Go: Lint"
-          command: go vet .
+          command: go vet ./...
       - save_cache:
           key: v1-gomod-{{ checksum "go.sum" }}
           paths:
