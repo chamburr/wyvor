@@ -1,13 +1,16 @@
 use crate::constants::{PLAYLIST_NAME_MAX, PLAYLIST_NAME_MIN};
 use crate::db::schema::playlist;
-use crate::models::{UpdateExt, Validate, ValidateExt};
+use crate::db::PgPool;
+use crate::models::{Validate, ValidateExt};
 use crate::routes::ApiResult;
 
+use actix_web::web::block;
 use chrono::NaiveDateTime;
 use diesel::prelude::*;
+use diesel::result::Error::QueryBuilderError;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Deserialize, Serialize, Queryable, Identifiable)]
+#[derive(Debug, Deserialize, Serialize, Queryable, Identifiable)]
 #[table_name = "playlist"]
 pub struct Playlist {
     pub id: i64,
@@ -52,31 +55,87 @@ impl Validate for EditPlaylist {
     }
 }
 
-pub fn create(conn: &PgConnection, new_playlist: &NewPlaylist) -> QueryResult<Playlist> {
-    diesel::insert_into(playlist::table)
-        .values(new_playlist)
-        .get_result(conn)
+pub async fn create(pool: &PgPool, new_playlist: NewPlaylist) -> ApiResult<Playlist> {
+    let pool = pool.clone();
+
+    Ok(block(move || -> ApiResult<Playlist> {
+        let conn = pool.get()?;
+        let res = diesel::insert_into(playlist::table)
+            .values(new_playlist)
+            .get_result(&*conn)?;
+
+        Ok(res)
+    })
+    .await?)
 }
 
-pub fn update(conn: &PgConnection, id: i64, edit_playlist: &EditPlaylist) -> QueryResult<usize> {
-    diesel::update(playlist::table.find(id))
-        .set(edit_playlist)
-        .execute(conn)
-        .safely()
+pub async fn update(pool: &PgPool, id: i64, edit_playlist: EditPlaylist) -> ApiResult<usize> {
+    let pool = pool.clone();
+
+    Ok(block(move || -> ApiResult<usize> {
+        let conn = pool.get()?;
+        let res = diesel::update(playlist::table.find(id))
+            .set(edit_playlist)
+            .execute(&*conn)
+            .or_else(|err| {
+                if let QueryBuilderError(_) = err {
+                    Ok(0)
+                } else {
+                    Err(err)
+                }
+            })?;
+
+        Ok(res)
+    })
+    .await?)
 }
 
-pub fn delete(conn: &PgConnection, id: i64) -> QueryResult<usize> {
-    diesel::delete(playlist::table.find(id)).execute(conn)
+pub async fn delete(pool: &PgPool, id: i64) -> ApiResult<usize> {
+    let pool = pool.clone();
+
+    Ok(block(move || -> ApiResult<usize> {
+        let conn = pool.get()?;
+        let res = diesel::delete(playlist::table.find(id)).execute(&*conn)?;
+
+        Ok(res)
+    })
+    .await?)
 }
 
-pub fn delete_by_guild(conn: &PgConnection, id: i64) -> QueryResult<usize> {
-    diesel::delete(playlist::table.filter(playlist::guild.eq(id))).execute(conn)
+pub async fn delete_by_guild(pool: &PgPool, id: i64) -> ApiResult<usize> {
+    let pool = pool.clone();
+
+    Ok(block(move || -> ApiResult<usize> {
+        let conn = pool.get()?;
+        let res = diesel::delete(playlist::table.filter(playlist::guild.eq(id))).execute(&*conn)?;
+
+        Ok(res)
+    })
+    .await?)
 }
 
-pub fn find(conn: &PgConnection, id: i64) -> QueryResult<Playlist> {
-    playlist::table.find(id).first(conn)
+pub async fn find(pool: &PgPool, id: i64) -> ApiResult<Option<Playlist>> {
+    let pool = pool.clone();
+
+    Ok(block(move || -> ApiResult<Option<Playlist>> {
+        let conn = pool.get()?;
+        let res = playlist::table.find(id).first(&*conn).optional()?;
+
+        Ok(res)
+    })
+    .await?)
 }
 
-pub fn find_by_guild(conn: &PgConnection, guild: i64) -> QueryResult<Vec<Playlist>> {
-    playlist::table.filter(playlist::guild.eq(guild)).load(conn)
+pub async fn find_by_guild(pool: &PgPool, guild: i64) -> ApiResult<Vec<Playlist>> {
+    let pool = pool.clone();
+
+    Ok(block(move || -> ApiResult<Vec<Playlist>> {
+        let conn = pool.get()?;
+        let res = playlist::table
+            .filter(playlist::guild.eq(guild))
+            .load(&*conn)?;
+
+        Ok(res)
+    })
+    .await?)
 }

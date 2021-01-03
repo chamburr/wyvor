@@ -1,23 +1,23 @@
-use crate::constants::{PUBSUB_CHANNEL, PUBSUB_MESSAGE_TIMEOUT};
-use crate::db::{get_redis_conn, RedisConn};
-use crate::routes::{ApiResponse, ApiResult};
-use crate::utils::player::get_node;
+use crate::constants::PUBSUB_CHANNEL;
+use crate::db::{get_redis_conn, RedisPool};
+use crate::routes::ApiResult;
+use crate::utils::player;
 
+use actix_web::web::block;
 use event_listener::Event;
-use rocket::Rocket;
-use rocket_contrib::databases::redis::{Commands, ErrorKind, RedisError};
-use rocket_contrib::json::JsonValue;
+use futures::StreamExt;
+use lazy_static::lazy_static;
+use nanoid::nanoid;
+use redis::AsyncCommands;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use serde_json::{self, Value};
+use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
-use std::thread;
-use std::time::Duration;
+use tracing::warn;
 use twilight_andesite::model::Play;
 use twilight_andesite::model::{SlimVoiceServerUpdate, VoiceUpdate};
 use twilight_model::id::GuildId;
-use uuid::Uuid;
 
 pub mod models;
 
@@ -36,62 +36,59 @@ pub struct Message {
 }
 
 impl Message {
-    pub fn new(op: &str, data: JsonValue) -> Message {
+    pub fn new(op: &str, data: Value) -> Message {
         Message {
             op: op.to_owned(),
-            id: Some(Uuid::new_v4().to_string()),
-            data: data.into(),
+            id: Some(nanoid!()),
+            data,
         }
     }
 
-    pub fn send(&self, conn: &RedisConn) -> Result<(), RedisError> {
-        let payload = serde_json::to_string(self).unwrap();
-        let _: () = conn.publish(PUBSUB_CHANNEL, payload)?;
+    pub async fn send(&self, pool: &RedisPool) -> ApiResult<()> {
+        let payload = serde_json::to_string(self)?;
+
+        let pool = pool.clone();
+        let mut conn = block(move || pool.get()).await?;
+        let _: () = conn.publish(PUBSUB_CHANNEL, payload).await?;
+
         Ok(())
     }
 
-    pub fn send_and_wait<T: DeserializeOwned>(&self, conn: &RedisConn) -> ApiResult<Option<T>> {
-        let id = self.id.clone().unwrap();
+    pub async fn send_and_wait<T: DeserializeOwned>(
+        &self,
+        pool: &RedisPool,
+    ) -> ApiResult<Option<T>> {
+        let id = self.id.as_ref().unwrap();
 
         let events_arc = EVENTS.clone();
         let messages_arc = MESSAGES.clone();
 
         let event = Arc::new(Event::new());
-        let mut events = events_arc.write().unwrap();
+
+        let mut events = events_arc.write()?;
         events.insert(id.clone(), event.clone());
         drop(events);
 
         let listener = event.listen();
-        self.send(conn)?;
+        self.send(pool).await?;
+        listener.await;
 
-        listener.wait_timeout(Duration::from_millis(PUBSUB_MESSAGE_TIMEOUT as u64));
+        let mut messages = messages_arc.write()?;
+        let message = messages.remove(id);
 
-        let mut messages = messages_arc.write().unwrap();
-        let message = if let Some(value) = messages.get(&id) {
-            Some(value.clone())
+        let mut events = events_arc.write()?;
+        events.remove(id);
+
+        if let Some(message) = message {
+            Ok(serde_json::from_value(message)?)
         } else {
-            None
-        };
-
-        messages.remove(&id);
-        drop(messages);
-
-        let mut events = events_arc.write().unwrap();
-        events.remove(&id);
-        drop(events);
-
-        if let Some(value) = message {
-            Ok(serde_json::from_value(value)?)
-        } else {
-            Err(ApiResponse::from(RedisError::from((
-                ErrorKind::IoError,
-                "Timed out waiting for message",
-            ))))
+            Ok(None)
         }
     }
 
-    pub fn send_and_pause(&self, conn: &RedisConn) -> ApiResult<Option<()>> {
-        let value: Option<Value> = self.send_and_wait(conn)?;
+    pub async fn send_and_pause(&self, pool: &RedisPool) -> ApiResult<Option<()>> {
+        let value: Option<Value> = self.send_and_wait(pool).await?;
+
         Ok(value.map(|_| ()))
     }
 
@@ -156,58 +153,76 @@ impl Message {
     }
 }
 
-pub fn init_pubsub(rocket: &Rocket) {
-    let mut conn = get_redis_conn(rocket);
+pub fn init_pubsub() {
+    actix_web::rt::spawn(async move {
+        loop {
+            let err = run_jobs().await;
+            warn!("Pubsub jobs ended unexpectedly: {:?}", err);
+        }
+    });
+}
 
+async fn run_jobs() -> ApiResult<()> {
+    let conn = get_redis_conn().await?;
+    let mut pubsub = conn.into_pubsub();
+    pubsub.subscribe(PUBSUB_CHANNEL).await?;
+
+    while let Some(message) = pubsub.on_message().next().await {
+        match message.get_payload::<String>() {
+            Ok(payload) => match serde_json::from_str::<Message>(payload.as_str()) {
+                Ok(payload) => {
+                    if let Err(err) = handle_payload(payload).await {
+                        warn!("Failed to handle pubsub payload: {:?}", err)
+                    }
+                },
+                Err(err) => {
+                    warn!("Failed to deserialize pubsub payload: {:?}", err);
+                },
+            },
+            Err(err) => {
+                warn!("Failed to get pubsub message: {:?}", err);
+            },
+        }
+    }
+
+    Ok(())
+}
+
+async fn handle_payload(payload: Message) -> ApiResult<()> {
     let events_arc = EVENTS.clone();
     let messages_arc = MESSAGES.clone();
 
-    thread::spawn(move || {
-        let mut pubsub = conn.as_pubsub();
-        pubsub.subscribe(PUBSUB_CHANNEL).unwrap();
+    match payload.op.as_str() {
+        "response" => {
+            if let Some(id) = payload.id {
+                if let Some(event) = events_arc.read()?.get(&id) {
+                    let event = event.clone();
 
-        loop {
-            let payload: Message = {
-                let payload_str: String = pubsub.get_message().unwrap().get_payload().unwrap();
-                serde_json::from_str(&payload_str).unwrap()
-            };
+                    let mut messages = messages_arc.write()?;
+                    messages.insert(id, payload.data);
 
-            let _ = || -> ApiResult<()> {
-                match payload.op.as_str() {
-                    "response" => {
-                        let events = events_arc.read().unwrap();
-                        if let Some(id) = payload.id {
-                            if let Some(event) = events.get(&id) {
-                                let event = event.clone();
-                                drop(events);
-
-                                let mut messages = messages_arc.write().unwrap();
-                                messages.insert(id, payload.data);
-
-                                event.notify(usize::MAX);
-                            }
-                        }
-                    },
-                    "voice_update" => {
-                        let update: models::VoiceUpdate = serde_json::from_value(payload.data)?;
-                        let guild = GuildId(update.guild as u64);
-
-                        get_node().send(VoiceUpdate::new(
-                            guild,
-                            update.session,
-                            SlimVoiceServerUpdate {
-                                endpoint: Some(update.endpoint),
-                                token: update.token,
-                            },
-                        ))?;
-
-                        get_node().send(Play::new(guild, ""))?;
-                    },
-                    _ => (),
+                    event.notify(usize::MAX);
                 }
+            }
+        },
+        "voice_update" => {
+            let update: models::VoiceUpdate = serde_json::from_value(payload.data)?;
+            let guild = GuildId(update.guild as u64);
 
-                Ok(())
-            }();
-        }
-    });
+            player::send(VoiceUpdate::new(
+                guild,
+                update.session,
+                SlimVoiceServerUpdate {
+                    endpoint: Some(update.endpoint),
+                    token: update.token,
+                },
+            ))
+            .await?;
+
+            player::send(Play::new(guild, "")).await?;
+        },
+        _ => {},
+    }
+
+    Ok(())
 }

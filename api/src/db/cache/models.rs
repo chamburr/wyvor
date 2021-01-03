@@ -1,7 +1,7 @@
 use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct Stats {
     pub version: String,
     pub started: NaiveDateTime,
@@ -13,7 +13,7 @@ pub struct Stats {
     pub voices: i32,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct Status {
     pub shard: i32,
     pub status: String,

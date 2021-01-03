@@ -1,343 +1,307 @@
-use crate::config::{get_config, get_value};
-use crate::constants::{
-    PLAYER_BUFFER, PLAYER_ID_KEY, PLAYER_RECONNECT_WAIT, PLAYER_STATS_KEY, PLAYER_STATS_KEY_TTL,
-    PLAYER_TIMEOUT,
-};
+use crate::config::{get_andesite_address, CONFIG};
+use crate::constants::{player_key, PLAYER_QUEUE, PLAYER_RECONNECT_WAIT, PLAYER_SEND_QUEUE};
 use crate::db::pubsub::models::Connected;
 use crate::db::pubsub::Message;
-use crate::db::{cache, get_pg_conn, get_redis_conn, RedisConn};
+use crate::db::{cache, PgPool, RedisPool};
 use crate::models::guild_stat::{self, NewGuildStat};
-use crate::routes::{ApiResponse, ApiResult};
+use crate::routes::ApiResult;
 use crate::utils::log::{self, LogInfo};
-use crate::utils::metrics::{ANDESITE_EVENTS, PLAYED_TRACKS, VOICE_CLOSES};
-use crate::utils::polling;
-use crate::utils::queue::Queue;
-use crate::utils::{block_on, to_screaming_snake_case};
+use crate::utils::{polling, queue, sleep};
 
-use chrono::Utc;
-use dashmap::mapref::one::Ref;
 use event_listener::Event;
 use futures::StreamExt;
-use reqwest::blocking;
-use rocket::config::Value;
-use rocket::Rocket;
+use lapin::options::{BasicAckOptions, BasicConsumeOptions, BasicPublishOptions};
+use lapin::types::FieldTable;
+use lapin::{BasicProperties, Channel};
+use lazy_static::lazy_static;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::convert::TryInto;
-use std::net::SocketAddr;
-use std::str::FromStr;
 use std::sync::{Arc, RwLock};
-use std::thread;
 use std::time::Duration;
-use twilight_andesite::client::Lavalink;
-use twilight_andesite::http::{load_track, LoadedTracks, Track};
+use tracing::warn;
+use twilight_andesite::http::{self, LoadedTracks, Track};
 use twilight_andesite::model::{
-    Destroy, GetPlayer, IncomingEvent, Opcode, PlayerUpdate, PlayerUpdateState, Stats,
+    Destroy, Filters, GetPlayer, IncomingEvent, OutgoingEvent, PlayerUpdateState,
 };
-use twilight_andesite::node::{Node, Resume};
-use twilight_andesite::player::Player;
+use twilight_andesite::node::NodeConfig;
 use twilight_model::id::{GuildId, UserId};
-use twilight_model::voice::CloseCode;
 
 lazy_static! {
-    static ref PLAYER_CLIENT: RwLock<Option<Lavalink>> = RwLock::new(None);
-    static ref PLAYER_NODE: RwLock<Option<Node>> = RwLock::new(None);
+    static ref CHANNEL: Arc<RwLock<Option<Channel>>> = Arc::new(RwLock::new(None));
     static ref RECONNECTS: Arc<RwLock<HashMap<u64, Arc<Event>>>> =
         Arc::new(RwLock::new(HashMap::new()));
 }
 
-pub fn init_player(rocket: &Rocket) {
-    let config = get_config(rocket);
-    let andesite_config: HashMap<String, Value> = get_value(&config, "andesite");
-    let discord_config: HashMap<String, Value> = get_value(&config, "discord");
-
-    let uri: String = get_value(&andesite_config, "uri");
-    let secret: String = get_value(&andesite_config, "secret");
-    let id: u64 = get_value(&discord_config, "id");
-
-    let conn = get_pg_conn(rocket);
-    let redis_conn = get_redis_conn(rocket);
-    let connection_id: Option<u64> = cache::get(&redis_conn, PLAYER_ID_KEY).unwrap_or(None);
-
-    let client = Lavalink::new(UserId(id));
-    let (node, mut receiver) = block_on(client.add_with_resume(
-        SocketAddr::from_str(uri.as_str()).unwrap(),
-        secret,
-        Resume::new_with_id(PLAYER_BUFFER as u64, connection_id),
-    ))
-    .expect("Failed to connect to andesite node");
-
-    PLAYER_CLIENT.write().unwrap().replace(client);
-    PLAYER_NODE.write().unwrap().replace(node);
-
-    cache::set(&redis_conn, PLAYER_ID_KEY, &get_node().connection_id())
-        .expect("Failed to set andesite player id");
-
-    thread::spawn(move || loop {
-        let message = block_on(receiver.next()).unwrap();
-        let op = to_screaming_snake_case(
-            serde_json::to_value(&message)
-                .unwrap()
-                .get("op")
-                .unwrap()
-                .as_str()
-                .unwrap(),
-        );
-
-        ANDESITE_EVENTS.with_label_values(&[op.as_str()]).inc();
-
-        let _ = || -> ApiResult<()> {
-            match message {
-                IncomingEvent::TrackStart(event) => {
-                    let guild = event.guild_id.0;
-                    let queue = Queue::from(&redis_conn, guild);
-                    let playing = queue.get_playing_track()?;
-
-                    get_node().send(GetPlayer::new(GuildId(guild)))?;
-
-                    if let Some(playing) = playing {
-                        log::register_playing(
-                            &*conn,
-                            &redis_conn,
-                            guild,
-                            LogInfo::NowPlaying(playing.clone()),
-                        )?;
-
-                        guild_stat::create(
-                            &*conn,
-                            &NewGuildStat {
-                                guild: guild as i64,
-                                author: playing.author,
-                                title: playing.title.clone(),
-                            },
-                        )?;
-
-                        PLAYED_TRACKS
-                            .with_label_values(&[
-                                playing.title.as_str(),
-                                playing.length.to_string().as_str(),
-                            ])
-                            .inc();
-                    }
-
-                    polling::notify(guild);
-                },
-                IncomingEvent::TrackEnd(event) => {
-                    let guild = event.guild_id.0;
-
-                    if event.reason == "FINISHED" {
-                        play_next(&redis_conn, guild)?;
-                        polling::notify(guild);
-                    }
-                },
-                IncomingEvent::TrackStuck(event) => {
-                    let guild = event.guild_id.0;
-
-                    log::register_playing(&*conn, &redis_conn, guild, LogInfo::TrackStuck(event))?;
-                    play_next(&redis_conn, guild)?;
-                    polling::notify(guild);
-                },
-                IncomingEvent::TrackException(event) => {
-                    let guild = event.guild_id.0;
-
-                    log::register_playing(
-                        &*conn,
-                        &redis_conn,
-                        guild,
-                        LogInfo::TrackException(event),
-                    )?;
-                    play_next(&redis_conn, guild)?;
-                    polling::notify(guild);
-                },
-                IncomingEvent::WebsocketClose(event) => {
-                    VOICE_CLOSES
-                        .with_label_values(&[event.code.to_string().as_str()])
-                        .inc();
-
-                    let guild = event.guild_id.0;
-
-                    if event.code == CloseCode::Disconnected as i64 || !event.by_remote {
-                        let client = get_client();
-                        let player = client.get_player(&redis_conn, guild)?;
-
-                        Queue::from(&redis_conn, guild).delete()?;
-                        player.send(Destroy::new(GuildId(guild)))?;
-                    } else if event.code != CloseCode::SessionNoLongerValid as i64 {
-                        log::register_playing(
-                            &*conn,
-                            &redis_conn,
-                            guild,
-                            LogInfo::WebsocketClose(event),
-                        )?;
-
-                        let connected: Option<Connected> =
-                            Message::get_connected(guild, None).send_and_wait(&redis_conn)?;
-                        if let Some(connected) = connected {
-                            Message::set_connected(guild, None).send_and_pause(&redis_conn)?;
-                            Message::set_connected(guild, connected.channel as u64)
-                                .send_and_pause(&redis_conn)?;
-                        }
-                    } else {
-                        log::register_playing(
-                            &*conn,
-                            &redis_conn,
-                            guild,
-                            LogInfo::WebsocketClose(event),
-                        )?;
-                    }
-                },
-                _ => {},
-            }
-
-            Ok(())
-        }();
+pub fn init_player(pool: PgPool, redis_pool: RedisPool, channel: Channel) {
+    actix_web::rt::spawn(async move {
+        loop {
+            let err = run_jobs(&pool, &redis_pool, &channel).await;
+            warn!("Player jobs ended unexpectedly: {:?}", err);
+        }
     });
 }
 
-fn play_next(conn: &RedisConn, guild: u64) -> ApiResult<()> {
-    let queue = Queue::from(conn, guild);
-    let client = get_client();
-    let player = client.get_player(conn, guild)?;
+async fn run_jobs(pool: &PgPool, redis_pool: &RedisPool, channel: &Channel) -> ApiResult<()> {
+    CHANNEL.clone().write()?.replace(channel.clone());
 
-    queue.next()?;
-    queue.play_with(&player)?;
+    let mut consumer = channel
+        .basic_consume(
+            PLAYER_QUEUE,
+            "",
+            BasicConsumeOptions::default(),
+            FieldTable::default(),
+        )
+        .await?;
+
+    while let Some(message) = consumer.next().await {
+        match message {
+            Ok((channel, delivery)) => {
+                if let Err(err) = channel
+                    .basic_ack(delivery.delivery_tag, BasicAckOptions::default())
+                    .await
+                {
+                    warn!("Failed to ack amqp delivery: {:?}", err);
+                }
+
+                match serde_json::from_slice::<IncomingEvent>(delivery.data.as_slice()) {
+                    Ok(payload) => {
+                        if let Err(err) = handle_payload(pool, redis_pool, payload).await {
+                            warn!("Failed to handle amqp payload: {:?}", err)
+                        }
+                    },
+                    Err(err) => {
+                        warn!("Failed to deserialize amqp payload: {:?}", err);
+                    },
+                }
+            },
+            Err(err) => {
+                warn!("Failed to consume amqp delivery: {:?}", err);
+            },
+        }
+    }
 
     Ok(())
 }
 
-pub fn get_client() -> Lavalink {
-    PLAYER_CLIENT.read().unwrap().clone().unwrap()
-}
+async fn handle_payload(
+    pool: &PgPool,
+    redis_pool: &RedisPool,
+    payload: IncomingEvent,
+) -> ApiResult<()> {
+    let guild = payload.guild_id().0;
 
-pub fn get_node() -> Node {
-    PLAYER_NODE.read().unwrap().clone().unwrap()
-}
+    match payload {
+        IncomingEvent::TrackStart(event) => {
+            send(GetPlayer::new(event.guild_id)).await?;
 
-pub trait NodeExt {
-    fn get_stats(&self, conn: &RedisConn) -> ApiResult<Stats>;
-}
+            let playing = queue::get_playing_track(redis_pool, guild)
+                .await?
+                .unwrap_or_default();
 
-impl NodeExt for Node {
-    fn get_stats(&self, conn: &RedisConn) -> ApiResult<Stats> {
-        let stats: Option<Stats> = cache::get(&conn, PLAYER_STATS_KEY).unwrap_or(None);
-        if let Some(stats) = stats {
-            return Ok(stats);
-        }
+            let stat = NewGuildStat {
+                guild: guild as i64,
+                author: playing.author,
+                title: playing.title.clone(),
+            };
 
-        let stats = block_on(self.stats());
-        cache::set_and_expire(conn, PLAYER_STATS_KEY, &stats, PLAYER_STATS_KEY_TTL)?;
+            guild_stat::create(pool, stat).await?;
+            log::register_playing(pool, redis_pool, guild, LogInfo::NowPlaying(playing)).await?;
 
-        Ok(stats)
-    }
-}
-
-pub trait ClientExt {
-    fn get_player(&self, conn: &RedisConn, guild: u64) -> ApiResult<Ref<'_, GuildId, Player>>;
-}
-
-impl ClientExt for Lavalink {
-    fn get_player(&self, conn: &RedisConn, guild: u64) -> ApiResult<Ref<'_, GuildId, Player>> {
-        if let Some(player) = self.players().get(&GuildId(guild)) {
-            if player.position().is_none() || !player.is_timed_out() {
-                return Ok(player);
+            polling::notify(guild)?;
+        },
+        IncomingEvent::TrackEnd(event) => {
+            if event.reason == "FINISHED" {
+                queue::play_next(redis_pool, guild).await?;
+                polling::notify(guild)?;
             }
-        }
-
-        let connected: Option<Connected> =
-            Message::get_connected(guild, None).send_and_wait(conn)?;
-        if let Some(connected) = connected {
-            if let Ok(update) = fetch_player(GuildId(guild)) {
-                let client = get_client();
-                get_node().provide_player_update(
-                    client.players(),
-                    &PlayerUpdate {
-                        op: Opcode::PlayerUpdate,
-                        guild_id: GuildId(guild),
-                        user_id: None,
-                        state: update,
-                    },
-                )?;
-
-                if let Some(player) = self.players().get(&GuildId(guild)) {
-                    return Ok(player);
-                }
-
-                return Err(ApiResponse::internal_server_error());
-            }
-
-            let reconnects_arc = RECONNECTS.clone();
-            let reconnects = reconnects_arc.read().unwrap();
-
-            if let Some(event) = reconnects.get(&guild) {
-                let listener = event.listen();
-
-                drop(reconnects);
-
-                listener.wait_timeout(Duration::from_millis(PLAYER_RECONNECT_WAIT as u64));
-
-                if let Some(player) = self.players().get(&GuildId(guild)) {
-                    return Ok(player);
-                }
+        },
+        IncomingEvent::TrackStuck(event) => {
+            log::register_playing(pool, redis_pool, guild, LogInfo::TrackStuck(event)).await?;
+            queue::play_next(redis_pool, guild).await?;
+            polling::notify(guild)?;
+        },
+        IncomingEvent::TrackException(event) => {
+            log::register_playing(pool, redis_pool, guild, LogInfo::TrackException(event)).await?;
+            queue::play_next(redis_pool, guild).await?;
+            polling::notify(guild)?;
+        },
+        IncomingEvent::WebsocketClose(event) => {
+            if reconnect(redis_pool, guild).await? {
+                log::register_playing(pool, redis_pool, guild, LogInfo::WebsocketClose(event))
+                    .await?;
             } else {
-                let reconnects_arc = RECONNECTS.clone();
-                let mut reconnects = reconnects_arc.write().unwrap();
-                let event = Arc::new(Event::new());
-                reconnects.insert(guild, event);
-
-                drop(reconnects);
-
-                Message::set_connected(guild, None).send_and_pause(conn)?;
-                thread::sleep(Duration::from_millis((PLAYER_RECONNECT_WAIT / 2) as u64));
-
-                Message::set_connected(guild, connected.channel as u64).send_and_pause(conn)?;
-                thread::sleep(Duration::from_millis((PLAYER_RECONNECT_WAIT / 2) as u64));
-
-                let mut reconnects = reconnects_arc.write().unwrap();
-                reconnects.remove(&guild);
-
-                if let Some(player) = self.players().get(&GuildId(guild)) {
-                    return Ok(player);
-                }
+                send(Destroy::new(GuildId(guild))).await?;
+                queue::delete(redis_pool, guild).await?;
             }
+        },
+        IncomingEvent::PlayerDestroy(event) => {
+            if !event.cleanup {
+                queue::delete(redis_pool, guild).await?;
+            } else {
+                reconnect(redis_pool, guild).await?;
+            }
+        },
+        _ => {},
+    }
+
+    Ok(())
+}
+
+async fn reconnect(pool: &RedisPool, guild: u64) -> ApiResult<bool> {
+    let connected: Option<Connected> = Message::get_connected(guild, None)
+        .send_and_wait(pool)
+        .await?;
+
+    if let Some(connected) = connected {
+        Message::set_connected(guild, None)
+            .send_and_pause(pool)
+            .await?;
+        Message::set_connected(guild, connected.channel as u64)
+            .send_and_pause(pool)
+            .await?;
+
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
+pub async fn send(event: impl Into<OutgoingEvent>) -> ApiResult<()> {
+    let channel_arc = CHANNEL.clone();
+    let channel_guard = channel_arc.read()?;
+    let channel = channel_guard.as_ref().unwrap().clone();
+    drop(channel_guard);
+
+    channel
+        .basic_publish(
+            "",
+            PLAYER_SEND_QUEUE,
+            BasicPublishOptions::default(),
+            serde_json::to_vec(&event.into())?,
+            BasicProperties::default(),
+        )
+        .await?;
+
+    Ok(())
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct Player {
+    pub guild_id: GuildId,
+    pub time: i64,
+    pub position: Option<i64>,
+    pub paused: bool,
+    pub volume: i64,
+    pub filters: Filters,
+}
+
+impl Player {
+    pub fn from(guild: u64, state: PlayerUpdateState) -> Self {
+        Self {
+            guild_id: GuildId(guild),
+            time: state.time,
+            position: state.position,
+            paused: state.paused,
+            volume: state.volume,
+            filters: state.filters,
+        }
+    }
+}
+
+pub async fn get_player(pool: &RedisPool, guild: u64) -> ApiResult<Player> {
+    let state: Option<PlayerUpdateState> = cache::get(pool, player_key(guild)).await?;
+
+    if let Some(state) = state {
+        let player = Player::from(guild, state);
+        return Ok(player);
+    }
+
+    let connected = Message::get_connected(guild, None)
+        .send_and_pause(pool)
+        .await?;
+
+    if connected.is_some() {
+        if let Ok(state) = fetch_player(guild).await {
+            cache::set(pool, player_key(guild), &state).await?;
+            return Ok(Player::from(guild, state));
         }
 
-        Err(ApiResponse::internal_server_error())
+        let reconnects_arc = RECONNECTS.clone();
+        let reconnects = reconnects_arc.read()?;
+
+        if let Some(event) = reconnects.get(&guild) {
+            let listener = event.listen();
+            drop(reconnects);
+            listener.await;
+        } else {
+            drop(reconnects);
+
+            let event = Arc::new(Event::new());
+            let mut reconnects = reconnects_arc.write()?;
+            reconnects.insert(guild, event.clone());
+            drop(reconnects);
+
+            reconnect(pool, guild).await?;
+            sleep(Duration::from_millis(PLAYER_RECONNECT_WAIT as u64)).await?;
+            event.notify(usize::MAX);
+
+            let mut reconnects = reconnects_arc.write()?;
+            reconnects.remove(&guild);
+        }
+
+        let state: Option<PlayerUpdateState> = cache::get(pool, player_key(guild)).await?;
+        if let Some(state) = state {
+            return Ok(Player::from(guild, state));
+        }
     }
+
+    Err(().into())
 }
 
-pub trait PlayerExt {
-    fn is_timed_out(&self) -> bool;
+fn get_config() -> ApiResult<NodeConfig> {
+    let config = NodeConfig {
+        user_id: UserId(CONFIG.bot_client_id),
+        address: get_andesite_address()?,
+        authorization: CONFIG.andesite_secret.clone(),
+        resume: None,
+    };
+
+    Ok(config)
 }
 
-impl PlayerExt for Player {
-    fn is_timed_out(&self) -> bool {
-        let difference = Utc::now().timestamp_millis() - self.time();
-        difference > 0 && (difference as usize) > PLAYER_TIMEOUT
-    }
-}
+pub async fn get_track(identifier: &str) -> ApiResult<LoadedTracks> {
+    let request = http::load_track(get_config()?, identifier)?;
 
-pub fn get_track(identifier: &str) -> Result<LoadedTracks, reqwest::Error> {
-    let config = get_node().config().clone();
-    let request = load_track(config, identifier).unwrap();
-
-    blocking::Client::new()
-        .execute(request.try_into().unwrap())?
+    let tracks = reqwest::Client::new()
+        .execute(request.try_into()?)
+        .await?
         .json()
+        .await?;
+
+    Ok(tracks)
 }
 
-pub fn decode_track(track: &str) -> Result<Track, reqwest::Error> {
-    let config = get_node().config().clone();
-    let request = twilight_andesite::http::decode_track(config, track).unwrap();
+pub async fn decode_track(track: &str) -> ApiResult<Track> {
+    let request = http::decode_track(get_config()?, track)?;
 
-    blocking::Client::new()
-        .execute(request.try_into().unwrap())?
+    let track = reqwest::Client::new()
+        .execute(request.try_into()?)
+        .await?
         .json()
+        .await?;
+
+    Ok(track)
 }
 
-pub fn fetch_player(guild: GuildId) -> Result<PlayerUpdateState, reqwest::Error> {
-    let config = get_node().config().clone();
-    let request = twilight_andesite::http::get_player(config, guild).unwrap();
+pub async fn fetch_player(guild: u64) -> ApiResult<PlayerUpdateState> {
+    let request = http::get_player(get_config()?, GuildId(guild))?;
 
-    blocking::Client::new()
-        .execute(request.try_into().unwrap())?
+    let track = reqwest::Client::new()
+        .execute(request.try_into()?)
+        .await?
         .json()
+        .await?;
+
+    Ok(track)
 }

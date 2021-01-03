@@ -1,13 +1,16 @@
 use crate::constants::{BLACKLIST_REASON_MAX, BLACKLIST_REASON_MIN};
 use crate::db::schema::blacklist;
-use crate::models::{string_int, UpdateExt, Validate, ValidateExt};
+use crate::db::PgPool;
+use crate::models::{string_int, Validate, ValidateExt};
 use crate::routes::ApiResult;
 
+use actix_web::web::block;
 use chrono::NaiveDateTime;
 use diesel::prelude::*;
+use diesel::result::Error::QueryBuilderError;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Deserialize, Serialize, Queryable, Identifiable)]
+#[derive(Debug, Deserialize, Serialize, Queryable, Identifiable)]
 #[table_name = "blacklist"]
 pub struct Blacklist {
     pub id: i64,
@@ -16,7 +19,7 @@ pub struct Blacklist {
     pub created: NaiveDateTime,
 }
 
-#[derive(Debug, Clone, Deserialize, Insertable)]
+#[derive(Debug, Deserialize, Insertable)]
 #[table_name = "blacklist"]
 pub struct NewBlacklist {
     #[serde(deserialize_with = "string_int")]
@@ -26,7 +29,7 @@ pub struct NewBlacklist {
     pub author: i64,
 }
 
-#[derive(Debug, Clone, Deserialize, AsChangeset)]
+#[derive(Debug, Deserialize, AsChangeset)]
 #[table_name = "blacklist"]
 pub struct EditBlacklist {
     pub reason: Option<String>,
@@ -56,24 +59,62 @@ impl Validate for EditBlacklist {
     }
 }
 
-pub fn create(conn: &PgConnection, new_blacklist: &NewBlacklist) -> QueryResult<Blacklist> {
-    diesel::insert_into(blacklist::table)
-        .values(new_blacklist)
-        .on_conflict_do_nothing()
-        .get_result(conn)
+pub async fn create(pool: &PgPool, new_blacklist: NewBlacklist) -> ApiResult<Blacklist> {
+    let pool = pool.clone();
+
+    Ok(block(move || -> ApiResult<Blacklist> {
+        let conn = pool.get()?;
+        let res = diesel::insert_into(blacklist::table)
+            .values(new_blacklist)
+            .on_conflict_do_nothing()
+            .get_result(&*conn)?;
+
+        Ok(res)
+    })
+    .await?)
 }
 
-pub fn update(conn: &PgConnection, id: i64, edit_blacklist: &EditBlacklist) -> QueryResult<usize> {
-    diesel::update(blacklist::table.find(id))
-        .set(edit_blacklist)
-        .execute(conn)
-        .safely()
+pub async fn update(pool: &PgPool, id: i64, edit_blacklist: EditBlacklist) -> ApiResult<usize> {
+    let pool = pool.clone();
+
+    Ok(block(move || -> ApiResult<usize> {
+        let conn = pool.get()?;
+        let res = diesel::update(blacklist::table.find(id))
+            .set(edit_blacklist)
+            .execute(&*conn)
+            .or_else(|err| {
+                if let QueryBuilderError(_) = err {
+                    Ok(0)
+                } else {
+                    Err(err)
+                }
+            })?;
+
+        Ok(res)
+    })
+    .await?)
 }
 
-pub fn delete(conn: &PgConnection, id: i64) -> QueryResult<usize> {
-    diesel::delete(blacklist::table.find(id)).execute(conn)
+pub async fn delete(pool: &PgPool, id: i64) -> ApiResult<usize> {
+    let pool = pool.clone();
+
+    Ok(block(move || -> ApiResult<usize> {
+        let conn = pool.get()?;
+        let res = diesel::delete(blacklist::table.find(id)).execute(&*conn)?;
+
+        Ok(res)
+    })
+    .await?)
 }
 
-pub fn all(conn: &PgConnection) -> QueryResult<Vec<Blacklist>> {
-    blacklist::table.load(conn)
+pub async fn all(pool: &PgPool) -> ApiResult<Vec<Blacklist>> {
+    let pool = pool.clone();
+
+    Ok(block(move || -> ApiResult<Vec<Blacklist>> {
+        let conn = pool.get()?;
+        let res = blacklist::table.load(&*conn)?;
+
+        Ok(res)
+    })
+    .await?)
 }

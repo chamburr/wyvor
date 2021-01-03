@@ -1,141 +1,155 @@
-use crate::db::{cache, PgConn, RedisConn};
+use crate::db::{cache, PgPool, RedisPool};
 use crate::models::blacklist::{self, EditBlacklist, NewBlacklist};
 use crate::models::guild::{self, Guild};
 use crate::models::{account, Validate};
-use crate::routes::{ApiResponse, OptionExt};
+use crate::routes::{ApiResponse, ApiResult, OptionExt, ResultExt};
 use crate::utils::auth::User;
 
-use rocket_contrib::json::Json;
+use actix_web::web::{Data, Json, Path, Query};
+use actix_web::{delete, get, patch, put};
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::HashMap;
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct SimpleBlacklist {
     pub reason: String,
 }
 
-#[get("/guilds?<name>&<owner>")]
-pub fn get_guilds(
-    conn: PgConn,
-    redis_conn: RedisConn,
+#[get("/guilds")]
+pub async fn get_guilds(
     user: User,
-    name: Option<String>,
-    owner: Option<u64>,
-) -> ApiResponse {
-    user.has_bot_admin(&redis_conn)?;
+    pool: Data<PgPool>,
+    redis_pool: Data<RedisPool>,
+    Query(mut query): Query<HashMap<String, String>>,
+) -> ApiResult<ApiResponse> {
+    user.has_bot_admin(&redis_pool).await?;
+
+    let name = query.remove("name");
+    let owner = query
+        .remove("owner")
+        .map(|user| user.parse::<u64>().or_bad_request())
+        .transpose()?;
 
     if name.is_none() && owner.is_none() {
-        return ApiResponse::bad_request();
+        return ApiResponse::bad_request().finish();
     }
 
-    let mut guilds = vec![];
+    let all_guilds: Vec<Guild> = if let Some(name) = name {
+        guild::find_by_name(&pool, name)
+            .await?
+            .into_iter()
+            .filter(|guild| owner == None || Some(guild.owner as u64) == owner)
+            .collect()
+    } else {
+        guild::find_by_owner(&pool, owner.unwrap_or_default() as i64).await?
+    };
 
-    if let Some(name) = name {
-        guilds.push(guild::find_by_name(&*conn, name.as_str())?);
-    }
-
-    if let Some(owner) = owner {
-        guilds.push(guild::find_by_owner(&*conn, owner as i64)?);
-    }
-
-    let all_guilds: HashSet<Guild> = guilds.iter().flat_map(|guild| guild.clone()).collect();
-    let all_guilds: Vec<Guild> = all_guilds
-        .iter()
-        .filter(|guild| guilds.iter().all(|chunk| chunk.contains(*guild)))
-        .cloned()
-        .collect();
-
-    ApiResponse::ok().data(all_guilds)
+    ApiResponse::ok().data(all_guilds).finish()
 }
 
-#[get("/top_guilds?<amount>")]
-pub fn get_top_guilds(
-    conn: PgConn,
-    redis_conn: RedisConn,
+#[get("/top_guilds")]
+pub async fn get_top_guilds(
+    pool: Data<PgPool>,
+    redis_pool: Data<RedisPool>,
     user: User,
-    amount: Option<i64>,
-) -> ApiResponse {
-    user.has_bot_admin(&redis_conn)?;
+    Query(mut query): Query<HashMap<String, String>>,
+) -> ApiResult<ApiResponse> {
+    user.has_bot_admin(&redis_pool).await?;
 
-    let amount = amount.into_bad_request()?;
-    let guilds = guild::find_by_member_count(&*conn, amount)?;
+    let amount = query
+        .remove("amount")
+        .map(|user| user.parse::<u64>().or_bad_request())
+        .transpose()?
+        .or_bad_request()?;
 
-    ApiResponse::ok().data(guilds)
+    let guilds = guild::find_by_member_count(&pool, amount as i64).await?;
+
+    ApiResponse::ok().data(guilds).finish()
 }
 
 #[get("/blacklist")]
-pub fn get_blacklist(conn: PgConn, redis_conn: RedisConn, user: User) -> ApiResponse {
-    user.has_bot_admin(&redis_conn)?;
+pub async fn get_blacklist(
+    pool: Data<PgPool>,
+    redis_pool: Data<RedisPool>,
+    user: User,
+) -> ApiResult<ApiResponse> {
+    user.has_bot_admin(&redis_pool).await?;
 
-    let blacklist = blacklist::all(&*conn)?;
+    let blacklist = blacklist::all(&pool).await?;
 
-    ApiResponse::ok().data(blacklist)
+    ApiResponse::ok().data(blacklist).finish()
 }
 
-#[put("/blacklist/<item>", data = "<new_blacklist>")]
-pub fn put_blacklist_item(
-    conn: PgConn,
-    redis_conn: RedisConn,
+#[put("/blacklist/{item}")]
+pub async fn put_blacklist_item(
+    pool: Data<PgPool>,
+    redis_pool: Data<RedisPool>,
     user: User,
-    item: u64,
-    new_blacklist: Json<SimpleBlacklist>,
-) -> ApiResponse {
-    user.has_bot_admin(&redis_conn)?;
-
-    account::find(&*conn, item as i64)?;
-
-    if cache::get_blacklist_item(&redis_conn, item)?.is_some() {
-        return ApiResponse::bad_request().message("The user is already blacklisted.");
-    }
+    Path(item): Path<u64>,
+    Json(new_blacklist): Json<SimpleBlacklist>,
+) -> ApiResult<ApiResponse> {
+    user.has_bot_admin(&redis_pool).await?;
 
     let new_blacklist = NewBlacklist {
         id: item as i64,
-        reason: new_blacklist.into_inner().reason,
+        reason: new_blacklist.reason,
         author: user.user.id,
     };
 
+    account::find(&pool, item as i64).await?;
     new_blacklist.check()?;
 
-    blacklist::create(&*conn, &new_blacklist)?;
-    cache::invalidate_blacklist(&*conn, &redis_conn)?;
+    if cache::get_blacklist_item(&redis_pool, item)
+        .await?
+        .is_some()
+    {
+        return ApiResponse::bad_request()
+            .message("The user is already blacklisted.")
+            .finish();
+    }
 
-    ApiResponse::ok()
+    blacklist::create(&pool, new_blacklist).await?;
+    cache::invalidate_blacklist(&pool, &redis_pool).await?;
+
+    ApiResponse::ok().finish()
 }
 
-#[patch("/blacklist/<item>", data = "<new_blacklist>")]
-pub fn patch_blacklist_item(
-    conn: PgConn,
-    redis_conn: RedisConn,
+#[patch("/blacklist/{item}")]
+pub async fn patch_blacklist_item(
+    pool: Data<PgPool>,
+    redis_pool: Data<RedisPool>,
     user: User,
-    item: u64,
-    new_blacklist: Json<EditBlacklist>,
-) -> ApiResponse {
-    user.has_bot_admin(&redis_conn)?;
+    Path(item): Path<u64>,
+    Json(new_blacklist): Json<EditBlacklist>,
+) -> ApiResult<ApiResponse> {
+    user.has_bot_admin(&redis_pool).await?;
 
-    cache::get_blacklist_item(&redis_conn, item)?.into_not_found()?;
-
-    let new_blacklist = new_blacklist.into_inner();
+    cache::get_blacklist_item(&redis_pool, item)
+        .await?
+        .or_not_found()?;
     new_blacklist.check()?;
 
-    blacklist::update(&*conn, item as i64, &new_blacklist)?;
-    cache::invalidate_blacklist(&*conn, &redis_conn)?;
+    blacklist::update(&pool, item as i64, new_blacklist).await?;
+    cache::invalidate_blacklist(&pool, &redis_pool).await?;
 
-    ApiResponse::ok()
+    ApiResponse::ok().finish()
 }
 
-#[delete("/blacklist/<item>")]
-pub fn delete_blacklist_item(
-    conn: PgConn,
-    redis_conn: RedisConn,
+#[delete("/blacklist/{item}")]
+pub async fn delete_blacklist_item(
+    pool: Data<PgPool>,
+    redis_pool: Data<RedisPool>,
     user: User,
-    item: u64,
-) -> ApiResponse {
-    user.has_bot_admin(&redis_conn)?;
+    Path(item): Path<u64>,
+) -> ApiResult<ApiResponse> {
+    user.has_bot_admin(&redis_pool).await?;
 
-    cache::get_blacklist_item(&redis_conn, item)?.into_not_found()?;
+    cache::get_blacklist_item(&redis_pool, item)
+        .await?
+        .or_not_found()?;
 
-    blacklist::delete(&*conn, item as i64)?;
-    cache::invalidate_blacklist(&*conn, &redis_conn)?;
+    blacklist::delete(&pool, item as i64).await?;
+    cache::invalidate_blacklist(&pool, &redis_pool).await?;
 
-    ApiResponse::ok()
+    ApiResponse::ok().finish()
 }

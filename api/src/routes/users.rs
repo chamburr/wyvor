@@ -1,112 +1,106 @@
-use crate::constants::{FETCH_USERS_MAX, USER_KEY, USER_KEY_TTL};
+use crate::constants::{user_key, COOKIE_NAME, FETCH_USERS_MAX, USER_KEY_TTL};
 use crate::db::pubsub::Message;
-use crate::db::{cache, PgConn, RedisConn};
+use crate::db::{cache, PgPool, RedisPool};
 use crate::models::account::{self, Account};
-use crate::routes::{ApiResponse, OptionExt};
-use crate::utils::auth::{get_remove_token_cookie, User};
+use crate::routes::{ApiResponse, ApiResult, OptionExt, ResultExt};
+use crate::utils::auth::User;
 
-use rocket::http::Cookies;
-use serde::Serialize;
+use actix_web::web::{Data, Path, Query};
+use actix_web::{get, post};
+use serde_json::json;
+use std::collections::HashMap;
 
-#[derive(Debug, Clone, Serialize)]
-pub struct SimplePermissions {
-    pub manage_guild: bool,
-    pub manage_playlist: bool,
-    pub manage_player: bool,
-    pub manage_queue: bool,
-    pub manage_track: bool,
-}
-
-#[get("/?<ids>")]
-pub fn get_users(
-    conn: PgConn,
-    _redis_conn: RedisConn,
+#[get("")]
+pub async fn get_users(
     _user: User,
-    ids: Option<String>,
-) -> ApiResponse {
-    let ids = ids.into_bad_request()?;
-    let ids = ids
+    pool: Data<PgPool>,
+    Query(query): Query<HashMap<String, String>>,
+) -> ApiResult<ApiResponse> {
+    let ids = query
+        .get("ids")
+        .or_bad_request()?
         .split(',')
-        .map(|value| value.parse().map_err(|_| ApiResponse::bad_request()))
-        .collect::<Result<Vec<u64>, ApiResponse>>()?;
+        .map(|value| value.parse().or_bad_request())
+        .collect::<ApiResult<Vec<u64>>>()?;
 
     if ids.len() > FETCH_USERS_MAX {
         return ApiResponse::bad_request()
-            .message("The request has exceeded the limit for the maximum number of users.");
+            .message("The request has exceeded the limit for the maximum number of users.")
+            .finish();
     }
 
     let mut users = vec![];
     for id in ids {
-        if let Ok(user) = account::find(&*conn, id as i64) {
+        if let Some(user) = account::find(&pool, id as i64).await? {
             users.push(user);
         }
     }
 
-    ApiResponse::ok().data(users)
+    ApiResponse::ok().data(users).finish()
 }
 
-#[get("/<id>")]
-pub fn get_user(conn: PgConn, redis_conn: RedisConn, _user: User, id: u64) -> ApiResponse {
-    let user = account::find(&*conn, id as i64);
-
-    if let Ok(user) = user {
-        return ApiResponse::ok().data(user);
+#[get("/{id}")]
+pub async fn get_user(
+    _user: User,
+    pool: Data<PgPool>,
+    redis_pool: Data<RedisPool>,
+    Path(id): Path<u64>,
+) -> ApiResult<ApiResponse> {
+    if let Some(user) = account::find(&pool, id as i64).await? {
+        return ApiResponse::ok().data(user).finish();
     }
 
     let user: Account = Message::get_user(id)
-        .send_and_wait(&redis_conn)?
-        .into_not_found()?;
+        .send_and_wait(&redis_pool)
+        .await?
+        .or_not_found()?;
 
-    cache::set_and_expire(
-        &redis_conn,
-        &format!("{}{}", USER_KEY, id),
-        &user,
-        USER_KEY_TTL,
-    )?;
+    cache::set_and_expire(&redis_pool, user_key(id), &user, USER_KEY_TTL).await?;
 
-    ApiResponse::ok().data(user)
+    ApiResponse::ok().data(user).finish()
 }
 
 #[get("/@me")]
-pub fn get_user_me(_redis_conn: RedisConn, user: User) -> ApiResponse {
+pub async fn get_user_me(user: User) -> ApiResult<ApiResponse> {
     user.is_not_bot()?;
 
-    ApiResponse::ok().data(user.user)
+    ApiResponse::ok().data(user.user).finish()
 }
 
 #[get("/@me/guilds")]
-pub fn get_user_me_guilds(redis_conn: RedisConn, user: User) -> ApiResponse {
+pub async fn get_user_me_guilds(user: User, redis_pool: Data<RedisPool>) -> ApiResult<ApiResponse> {
     user.is_not_bot()?;
 
-    let guilds = user.get_guilds(&redis_conn)?;
-    ApiResponse::ok().data(guilds)
+    let guilds = user.get_guilds(&redis_pool).await?;
+
+    ApiResponse::ok().data(guilds).finish()
 }
 
-#[get("/@me/guilds/<id>")]
-pub fn get_users_me_guild(conn: PgConn, redis_conn: RedisConn, user: User, id: u64) -> ApiResponse {
-    user.has_read_guild(&redis_conn, id)?;
+#[get("/@me/guilds/{id}")]
+pub async fn get_users_me_guild(
+    user: User,
+    pool: Data<PgPool>,
+    redis_pool: Data<RedisPool>,
+    Path(id): Path<u64>,
+) -> ApiResult<ApiResponse> {
+    user.has_read_guild(&redis_pool, id).await?;
 
-    let permissions = SimplePermissions {
-        manage_guild: user.has_manage_guild(&*conn, &redis_conn, id).is_ok(),
-        manage_playlist: user.has_manage_playlist(&*conn, &redis_conn, id).is_ok(),
-        manage_player: user.has_manage_player(&*conn, &redis_conn, id).is_ok(),
-        manage_queue: user.has_manage_queue(&*conn, &redis_conn, id).is_ok(),
-        manage_track: user.has_manage_track(&*conn, &redis_conn, id).is_ok(),
-    };
+    let permissions = json!({
+        "manage_guild": user.has_manage_guild(&pool, &redis_pool, id).await.is_ok(),
+        "manage_playlist": user.has_manage_playlist(&pool, &redis_pool, id).await.is_ok(),
+        "manage_player": user.has_manage_player(&pool, &redis_pool, id).await.is_ok(),
+        "manage_queue": user.has_manage_queue(&pool, &redis_pool, id).await.is_ok(),
+        "manage_track": user.has_manage_track(&pool, &redis_pool, id).await.is_ok(),
+    });
 
-    ApiResponse::ok().data(permissions)
+    ApiResponse::ok().data(permissions).finish()
 }
 
 #[post("/@me/logout")]
-pub fn post_user_me_logout(
-    _redis_conn: RedisConn,
-    user: User,
-    mut cookies: Cookies<'_>,
-) -> ApiResponse {
+pub async fn post_user_me_logout(user: User) -> ApiResult<ApiResponse> {
     user.is_not_bot()?;
 
-    user.revoke_token()?;
-    cookies.remove_private(get_remove_token_cookie());
+    user.revoke_token().await?;
 
-    ApiResponse::ok()
+    ApiResponse::ok().del_cookie(COOKIE_NAME).finish()
 }

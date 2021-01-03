@@ -1,11 +1,14 @@
 use crate::db::schema::guild;
+use crate::db::PgPool;
+use crate::routes::ApiResult;
 
+use actix_web::web::block;
 use chrono::NaiveDateTime;
 use diesel::pg::upsert::excluded;
 use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize, Serialize, Queryable, Identifiable)]
+#[derive(Debug, PartialEq, Eq, Hash, Deserialize, Serialize, Queryable, Identifiable)]
 #[table_name = "guild"]
 pub struct Guild {
     pub id: i64,
@@ -17,7 +20,7 @@ pub struct Guild {
     pub updated_at: NaiveDateTime,
 }
 
-#[derive(Debug, Clone, Deserialize, Insertable)]
+#[derive(Debug, Deserialize, Insertable)]
 #[table_name = "guild"]
 pub struct NewGuild {
     pub id: i64,
@@ -27,33 +30,65 @@ pub struct NewGuild {
     pub member_count: i32,
 }
 
-pub fn batch_create(conn: &PgConnection, guilds: &[NewGuild]) -> QueryResult<usize> {
-    diesel::insert_into(guild::table)
-        .values(guilds)
-        .on_conflict(guild::id)
-        .do_update()
-        .set((
-            guild::name.eq(excluded(guild::name)),
-            guild::icon.eq(excluded(guild::icon)),
-            guild::owner.eq(excluded(guild::owner)),
-            guild::member_count.eq(excluded(guild::member_count)),
-        ))
-        .execute(conn)
+pub async fn batch_create(pool: &PgPool, guilds: Vec<NewGuild>) -> ApiResult<usize> {
+    let pool = pool.clone();
+
+    Ok(block(move || -> ApiResult<usize> {
+        let conn = pool.get()?;
+        let res = diesel::insert_into(guild::table)
+            .values(guilds)
+            .on_conflict(guild::id)
+            .do_update()
+            .set((
+                guild::name.eq(excluded(guild::name)),
+                guild::icon.eq(excluded(guild::icon)),
+                guild::owner.eq(excluded(guild::owner)),
+                guild::member_count.eq(excluded(guild::member_count)),
+            ))
+            .execute(&*conn)?;
+
+        Ok(res)
+    })
+    .await?)
 }
 
-pub fn find_by_name(conn: &PgConnection, name: &str) -> QueryResult<Vec<Guild>> {
-    guild::table
-        .filter(guild::name.ilike(format!("%{}%", name)))
-        .load(conn)
+pub async fn find_by_name(pool: &PgPool, name: String) -> ApiResult<Vec<Guild>> {
+    let pool = pool.clone();
+
+    Ok(block(move || -> ApiResult<Vec<Guild>> {
+        let conn = pool.get()?;
+        let res = guild::table
+            .filter(guild::name.ilike(format!("%{}%", name)))
+            .load(&*conn)?;
+
+        Ok(res)
+    })
+    .await?)
 }
 
-pub fn find_by_owner(conn: &PgConnection, owner: i64) -> QueryResult<Vec<Guild>> {
-    guild::table.filter(guild::owner.eq(owner)).load(conn)
+pub async fn find_by_owner(pool: &PgPool, owner: i64) -> ApiResult<Vec<Guild>> {
+    let pool = pool.clone();
+
+    Ok(block(move || -> ApiResult<Vec<Guild>> {
+        let conn = pool.get()?;
+        let res = guild::table.filter(guild::owner.eq(owner)).load(&*conn)?;
+
+        Ok(res)
+    })
+    .await?)
 }
 
-pub fn find_by_member_count(conn: &PgConnection, amount: i64) -> QueryResult<Vec<Guild>> {
-    guild::table
-        .order(guild::member_count.desc())
-        .limit(amount)
-        .load(conn)
+pub async fn find_by_member_count(pool: &PgPool, amount: i64) -> ApiResult<Vec<Guild>> {
+    let pool = pool.clone();
+
+    Ok(block(move || -> ApiResult<Vec<Guild>> {
+        let conn = pool.get()?;
+        let res = guild::table
+            .order(guild::member_count.desc())
+            .limit(amount)
+            .load(&*conn)?;
+
+        Ok(res)
+    })
+    .await?)
 }

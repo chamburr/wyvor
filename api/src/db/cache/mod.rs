@@ -1,155 +1,174 @@
 use crate::constants::{
-    BLACKLIST_KEY, CACHE_DUMP_INTERVAL, GUILD_CONFIG_KEY, GUILD_KEY, GUILD_PREFIX_KEY, USER_KEY,
+    guild_config_key, guild_prefix_key, BLACKLIST_KEY, CACHE_DUMP_INTERVAL, GUILD_KEY, USER_KEY,
 };
-use crate::db::{get_pg_conn, get_redis_conn, RedisConn};
+use crate::db::{PgPool, RedisPool};
 use crate::models::account::{self, Account};
-use crate::models::blacklist::{self, Blacklist};
+use crate::models::blacklist;
 use crate::models::config::{self, Config, EditConfig, NewConfig};
 use crate::models::guild::{self, NewGuild};
-use crate::routes::ApiResult;
+use crate::routes::{ApiResult, OptionExt};
+use crate::utils::sleep;
 
-use diesel::PgConnection;
-use rocket::Rocket;
-use rocket_contrib::databases::redis::Iter;
-use rocket_contrib::databases::redis::{Commands, RedisResult};
+use actix_web::web::block;
+use redis::{AsyncCommands, AsyncIter};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
-use std::thread;
 use std::time::Duration;
+use tracing::warn;
 
 pub mod models;
 
-struct Cache {
-    config: Vec<Config>,
-    blacklist: Vec<Blacklist>,
+async fn load_config(pool: &PgPool, redis_pool: &RedisPool) -> ApiResult<()> {
+    let configs = config::all(pool).await?;
+
+    for item in configs {
+        set(redis_pool, guild_config_key(item.id as u64), &item).await?;
+        set(redis_pool, guild_prefix_key(item.id as u64), &item.prefix).await?;
+    }
+
+    Ok(())
 }
 
-impl Cache {
-    fn new(conn: &PgConnection) -> Result<Self, diesel::result::Error> {
-        let config = config::all(conn)?;
-        let blacklist = blacklist::all(conn)?;
+async fn load_blacklist(pool: &PgPool, redis_pool: &RedisPool) -> ApiResult<()> {
+    let blacklists = blacklist::all(pool).await?;
 
-        Ok(Self { config, blacklist })
+    del(redis_pool, BLACKLIST_KEY).await?;
+
+    for item in blacklists {
+        sadd(redis_pool, BLACKLIST_KEY, &item.id).await?;
     }
 
-    fn load_config(&self, conn: &RedisConn) -> RedisResult<()> {
-        for config in self.config.iter() {
-            let config_key = format!("{}{}", GUILD_CONFIG_KEY, config.id);
-            let prefix_key = format!("{}{}", GUILD_PREFIX_KEY, config.id);
-
-            set(conn, &config_key, config)?;
-            set(conn, &prefix_key, &config.prefix)?;
-        }
-
-        Ok(())
-    }
-
-    fn load_blacklist(&self, conn: &RedisConn) -> RedisResult<()> {
-        del(conn, BLACKLIST_KEY)?;
-
-        for blacklist in &self.blacklist {
-            conn.sadd(BLACKLIST_KEY, blacklist.id)?;
-        }
-
-        Ok(())
-    }
-
-    fn load(&self, conn: &RedisConn) -> RedisResult<()> {
-        self.load_config(conn)?;
-        self.load_blacklist(conn)?;
-
-        Ok(())
-    }
+    Ok(())
 }
 
-pub fn init_cache(rocket: &Rocket) {
-    let conn = get_pg_conn(rocket);
-    let redis_conn = get_redis_conn(rocket);
-
-    let cache = Cache::new(&*conn).expect("Failed to get initial cache");
-    cache
-        .load(&redis_conn)
-        .expect("Failed to load initial cache");
-
-    thread::spawn(move || loop {
-        let user_keys: RedisResult<Iter<'_, String>> =
-            redis_conn.scan_match(format!("{}{}", USER_KEY, "*"));
-
-        if let Ok(user_keys) = user_keys {
-            let mut users = vec![];
-
-            for user_key in user_keys {
-                let user: Option<Account> = get(&redis_conn, user_key.as_str()).unwrap_or(None);
-                if let Some(user) = user {
-                    users.push(user);
-                }
-            }
-
-            let _ = account::batch_create(&*conn, users.as_slice());
+pub fn init_cache(pool: PgPool, redis_pool: RedisPool) {
+    actix_web::rt::spawn(async move {
+        loop {
+            let err = run_jobs(&pool, &redis_pool).await;
+            warn!("Cache jobs ended unexpectedly: {:?}", err);
         }
-
-        let guild_keys: RedisResult<Iter<'_, String>> =
-            redis_conn.scan_match(format!("{}{}", GUILD_KEY, "*"));
-
-        if let Ok(guild_keys) = guild_keys {
-            let mut guilds = vec![];
-
-            for guild_key in guild_keys {
-                let guild: Option<NewGuild> = get(&redis_conn, guild_key.as_str()).unwrap_or(None);
-                if let Some(guild) = guild {
-                    guilds.push(guild)
-                }
-            }
-
-            let _ = guild::batch_create(&*conn, guilds.as_slice());
-        }
-
-        thread::sleep(Duration::from_millis(CACHE_DUMP_INTERVAL as u64));
     });
 }
 
-pub fn get<T: DeserializeOwned>(conn: &RedisConn, key: &str) -> ApiResult<Option<T>> {
-    let res: Option<String> = conn.get(key)?;
-    if let Some(res) = res {
-        let res = serde_json::from_str(res.as_str())?;
-        Ok(res)
-    } else {
-        Ok(None)
+async fn run_jobs(pool: &PgPool, redis_pool: &RedisPool) -> ApiResult<()> {
+    load_config(pool, redis_pool).await?;
+    load_blacklist(pool, redis_pool).await?;
+
+    loop {
+        let redis_pool_clone = redis_pool.clone();
+        let mut conn = block(move || redis_pool_clone.get()).await?;
+        let mut user_keys: AsyncIter<'_, String> =
+            conn.scan_match(format!("{}:{}", USER_KEY, "*")).await?;
+
+        let mut users = vec![];
+
+        while let Some(user_key) = user_keys.next_item().await {
+            let user: Option<Account> = get(redis_pool, user_key).await?;
+            if let Some(user) = user {
+                users.push(user);
+            }
+        }
+
+        account::batch_create(pool, users).await?;
+
+        let redis_pool_clone = redis_pool.clone();
+        let mut conn = block(move || redis_pool_clone.get()).await?;
+        let mut guild_keys: AsyncIter<'_, String> =
+            conn.scan_match(format!("{}:{}", GUILD_KEY, "*")).await?;
+
+        let mut guilds = vec![];
+
+        while let Some(guild_key) = guild_keys.next_item().await {
+            let guild: Option<NewGuild> = get(redis_pool, guild_key.as_str()).await?;
+            if let Some(guild) = guild {
+                guilds.push(guild)
+            }
+        }
+
+        guild::batch_create(pool, guilds).await?;
+
+        sleep(Duration::from_millis(CACHE_DUMP_INTERVAL as u64)).await?;
     }
 }
 
-pub fn set<T: Serialize>(conn: &RedisConn, key: &str, value: &T) -> RedisResult<()> {
-    conn.set(key, serde_json::to_string(value).unwrap())
+pub async fn get<T: DeserializeOwned>(
+    pool: &RedisPool,
+    key: impl ToString,
+) -> ApiResult<Option<T>> {
+    let pool = pool.clone();
+    let mut conn = block(move || pool.get()).await?;
+    let res: Option<String> = conn.get(key.to_string()).await?;
+
+    let res: Option<T> = res
+        .map(|value| serde_json::from_str(value.as_str()))
+        .transpose()?;
+
+    Ok(res)
 }
 
-pub fn set_and_expire<T: Serialize>(
-    conn: &RedisConn,
-    key: &str,
+pub async fn set<T: Serialize>(pool: &RedisPool, key: impl ToString, value: &T) -> ApiResult<()> {
+    let pool = pool.clone();
+    let mut conn = block(move || pool.get()).await?;
+    conn.set(key.to_string(), serde_json::to_string(value)?)
+        .await?;
+
+    Ok(())
+}
+
+pub async fn set_and_expire<T: Serialize>(
+    pool: &RedisPool,
+    key: impl ToString,
     value: &T,
     expiry: usize,
-) -> RedisResult<()> {
-    set(conn, key, value)?;
-    conn.expire(key, expiry / 1000)
+) -> ApiResult<()> {
+    set(pool, key.to_string(), value).await?;
+
+    let pool = pool.clone();
+    let mut conn = block(move || pool.get()).await?;
+    conn.expire(key.to_string(), expiry / 1000).await?;
+
+    Ok(())
 }
 
-pub fn del(conn: &RedisConn, key: &str) -> RedisResult<()> {
-    conn.del(key)
+pub async fn del(pool: &RedisPool, key: impl ToString) -> ApiResult<()> {
+    let pool = pool.clone();
+    let mut conn = block(move || pool.get()).await?;
+    conn.del(key.to_string()).await?;
+
+    Ok(())
 }
 
-pub fn get_config(conn: &PgConnection, redis_conn: &RedisConn, guild: u64) -> ApiResult<Config> {
-    let config: Option<Config> = get(
-        redis_conn,
-        format!("{}{}", GUILD_CONFIG_KEY, guild).as_str(),
-    )?;
+pub async fn sadd(pool: &RedisPool, key: impl ToString, value: impl ToString) -> ApiResult<()> {
+    let pool = pool.clone();
+    let mut conn = block(move || pool.get()).await?;
+    conn.sadd(key.to_string(), value.to_string()).await?;
+
+    Ok(())
+}
+
+pub async fn sismember(
+    pool: &RedisPool,
+    key: impl ToString,
+    value: impl ToString,
+) -> ApiResult<bool> {
+    let pool = pool.clone();
+    let mut conn = block(move || pool.get()).await?;
+    let res = conn.sismember(key.to_string(), value.to_string()).await?;
+
+    Ok(res)
+}
+
+pub async fn get_config(pool: &PgPool, redis_pool: &RedisPool, guild: u64) -> ApiResult<Config> {
+    let config: Option<Config> = get(redis_pool, guild_config_key(guild)).await?;
 
     if let Some(config) = config {
         Ok(config)
     } else {
-        config::create(conn, &NewConfig { id: guild as i64 })?;
+        config::create(pool, NewConfig { id: guild as i64 }).await?;
         config::update(
-            conn,
+            pool,
             guild as i64,
-            &EditConfig {
+            EditConfig {
                 prefix: None,
                 max_queue: None,
                 no_duplicate: None,
@@ -163,17 +182,19 @@ pub fn get_config(conn: &PgConnection, redis_conn: &RedisConn, guild: u64) -> Ap
                 player_log: None,
                 queue_log: None,
             },
-        )?;
+        )
+        .await?;
 
-        invalidate_config(conn, redis_conn, guild)?;
+        invalidate_config(pool, redis_pool, guild).await?;
 
-        let config = config::find(conn, guild as i64)?;
+        let config = config::find(pool, guild as i64).await?.or_not_found()?;
+
         Ok(config)
     }
 }
 
-pub fn get_blacklist_item(conn: &RedisConn, user: u64) -> ApiResult<Option<()>> {
-    let blacklist = conn.sismember(BLACKLIST_KEY, user)?;
+pub async fn get_blacklist_item(pool: &RedisPool, user: u64) -> ApiResult<Option<()>> {
+    let blacklist = sismember(pool, BLACKLIST_KEY, &user).await?;
 
     if blacklist {
         Ok(Some(()))
@@ -182,30 +203,17 @@ pub fn get_blacklist_item(conn: &RedisConn, user: u64) -> ApiResult<Option<()>> 
     }
 }
 
-pub fn invalidate_config(conn: &PgConnection, redis_conn: &RedisConn, guild: u64) -> ApiResult<()> {
-    let config = config::find(conn, guild as i64)?;
+pub async fn invalidate_config(pool: &PgPool, redis_pool: &RedisPool, guild: u64) -> ApiResult<()> {
+    let config = config::find(pool, guild as i64).await?.or_not_found()?;
 
-    set(
-        redis_conn,
-        &format!("{}{}", GUILD_CONFIG_KEY, guild),
-        &config,
-    )?;
-    set(
-        redis_conn,
-        &format!("{}{}", GUILD_PREFIX_KEY, guild),
-        &config.prefix,
-    )?;
+    set(redis_pool, guild_config_key(guild), &config).await?;
+    set(redis_pool, guild_prefix_key(guild), &config.prefix).await?;
 
     Ok(())
 }
 
-pub fn invalidate_blacklist(conn: &PgConnection, redis_conn: &RedisConn) -> ApiResult<()> {
-    let cache = Cache {
-        config: vec![],
-        blacklist: blacklist::all(conn)?,
-    };
-
-    cache.load_blacklist(redis_conn)?;
+pub async fn invalidate_blacklist(pool: &PgPool, redis_pool: &RedisPool) -> ApiResult<()> {
+    load_blacklist(pool, redis_pool).await?;
 
     Ok(())
 }

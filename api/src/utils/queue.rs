@@ -1,21 +1,18 @@
-use crate::constants::{QUEUE_KEY, QUEUE_LOOP_KEY, QUEUE_PLAYING_KEY};
-use crate::db::cache;
-use crate::db::RedisConn;
+use crate::constants::{queue_key, queue_loop_key, queue_playing_key};
+use crate::db::{cache, RedisPool};
 use crate::models::account::Account;
 use crate::models::playlist_item::PlaylistItem;
 use crate::routes::ApiResult;
+use crate::utils::player;
 
-use dashmap::mapref::one::Ref;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
-use rocket_contrib::databases::redis::RedisResult;
 use serde::{Deserialize, Serialize};
 use twilight_andesite::http::Track;
 use twilight_andesite::model::Play;
-use twilight_andesite::player::Player;
 use twilight_model::id::GuildId;
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct QueueItem {
     pub track: String,
     pub title: String,
@@ -54,7 +51,7 @@ impl From<(PlaylistItem, Account)> for QueueItem {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Loop {
     None,
@@ -62,168 +59,189 @@ pub enum Loop {
     Queue,
 }
 
-pub struct Queue<'a> {
-    pub conn: &'a RedisConn,
-    pub guild: u64,
+pub async fn get(pool: &RedisPool, guild: u64) -> ApiResult<Vec<QueueItem>> {
+    let queue = cache::get(pool, queue_key(guild))
+        .await?
+        .unwrap_or_default();
+
+    Ok(queue)
 }
 
-impl<'a> Queue<'a> {
-    pub fn from(conn: &'a RedisConn, guild: u64) -> Self {
-        Self { conn, guild }
+pub async fn get_track(pool: &RedisPool, guild: u64, index: i32) -> ApiResult<Option<QueueItem>> {
+    if index < 0 {
+        return Ok(None);
     }
 
-    fn get_queue_key(&self) -> String {
-        format!("{}{}", QUEUE_KEY, self.guild)
+    let mut tracks = get(pool, guild).await?;
+    let track = if (index as usize) < tracks.len() {
+        Some(tracks.remove(index as usize))
+    } else {
+        None
+    };
+
+    Ok(track)
+}
+
+pub async fn set(pool: &RedisPool, guild: u64, queue: Vec<QueueItem>) -> ApiResult<()> {
+    cache::set(pool, queue_key(guild), &queue).await?;
+
+    Ok(())
+}
+
+pub async fn len(pool: &RedisPool, guild: u64) -> ApiResult<usize> {
+    let len = get(pool, guild).await?.len();
+
+    Ok(len)
+}
+
+pub async fn get_playing(pool: &RedisPool, guild: u64) -> ApiResult<i32> {
+    let playing = cache::get(pool, queue_playing_key(guild))
+        .await?
+        .unwrap_or(-1);
+
+    Ok(playing)
+}
+
+pub async fn get_playing_track(pool: &RedisPool, guild: u64) -> ApiResult<Option<QueueItem>> {
+    let playing = get_playing(pool, guild).await?;
+    let track = get_track(pool, guild, playing).await?;
+
+    Ok(track)
+}
+
+pub async fn set_playing(pool: &RedisPool, guild: u64, playing: i32) -> ApiResult<()> {
+    cache::set(pool, queue_playing_key(guild), &playing).await?;
+
+    Ok(())
+}
+
+pub async fn get_loop(pool: &RedisPool, guild: u64) -> ApiResult<Loop> {
+    let looping = cache::get(pool, queue_loop_key(guild))
+        .await?
+        .unwrap_or(Loop::None);
+
+    Ok(looping)
+}
+
+pub async fn set_loop(pool: &RedisPool, guild: u64, kind: &Loop) -> ApiResult<()> {
+    cache::set(pool, queue_loop_key(guild), kind).await?;
+
+    Ok(())
+}
+
+pub async fn add(pool: &RedisPool, guild: u64, item: QueueItem) -> ApiResult<()> {
+    let mut queue = get(pool, guild).await?;
+    queue.push(item);
+    set(pool, guild, queue).await?;
+
+    Ok(())
+}
+
+pub async fn remove(pool: &RedisPool, guild: u64, index: u32) -> ApiResult<QueueItem> {
+    let mut queue = get(pool, guild).await?;
+    let playing = get_playing(pool, guild).await?;
+
+    let removed = queue.remove(index as usize);
+    set(pool, guild, queue).await?;
+
+    if (index as i32) < playing {
+        set_playing(pool, guild, playing - 1).await?;
     }
 
-    fn get_playing_key(&self) -> String {
-        format!("{}{}", QUEUE_PLAYING_KEY, self.guild)
+    Ok(removed)
+}
+
+pub async fn shift(pool: &RedisPool, guild: u64, index: u32, position: u32) -> ApiResult<()> {
+    let mut queue = get(pool, guild).await?;
+    let playing = get_playing(pool, guild).await?;
+
+    let item = queue.remove(index as usize);
+    queue.insert(position as usize, item);
+    set(pool, guild, queue).await?;
+
+    let new_playing = if (index as i32) < playing && (position as i32) > playing {
+        playing - 1
+    } else if (index as i32) > playing && (position as i32) < playing {
+        playing + 1
+    } else {
+        playing
+    };
+
+    if playing != new_playing {
+        set_playing(pool, guild, new_playing).await?;
     }
 
-    fn get_loop_key(&self) -> String {
-        format!("{}{}", QUEUE_LOOP_KEY, self.guild)
+    Ok(())
+}
+
+pub async fn next(pool: &RedisPool, guild: u64) -> ApiResult<()> {
+    let tracks = get(pool, guild).await?;
+    let playing = get_playing(pool, guild).await?;
+    let looping = get_loop(pool, guild).await?;
+
+    let new_playing = match looping {
+        Loop::None if tracks.len() <= (playing + 1) as usize => -1,
+        Loop::Queue if tracks.len() <= (playing + 1) as usize => 0,
+        Loop::None | Loop::Queue => playing + 1,
+        Loop::Track => playing,
+    };
+
+    if playing != new_playing {
+        set_playing(pool, guild, new_playing).await?;
     }
 
-    pub fn get(&self) -> ApiResult<Vec<QueueItem>> {
-        let queue = cache::get(self.conn, self.get_queue_key().as_str())?.unwrap_or_default();
-        Ok(queue)
+    Ok(())
+}
+
+pub async fn shuffle(pool: &RedisPool, guild: u64) -> ApiResult<()> {
+    let mut queue = get(pool, guild).await?;
+    let playing = get_playing(pool, guild).await?;
+
+    let mut new_queue = vec![];
+    let mut rng = thread_rng();
+
+    if playing >= 0 {
+        let playing = playing as usize;
+        let mut queue_before: Vec<QueueItem> = queue.drain(..playing).collect();
+        let playing_item = queue.remove(0);
+        let mut queue_after = queue;
+
+        queue_before.shuffle(&mut rng);
+        queue_after.shuffle(&mut rng);
+        new_queue.extend(queue_before);
+        new_queue.push(playing_item);
+        new_queue.extend(queue_after);
+    } else {
+        queue.shuffle(&mut rng);
+        new_queue.append(&mut queue);
     }
 
-    pub fn get_track(&self, index: u32) -> ApiResult<Option<QueueItem>> {
-        let track = self.get()?.get(index as usize).cloned();
-        Ok(track)
+    set(pool, guild, new_queue).await?;
+
+    Ok(())
+}
+
+pub async fn delete(pool: &RedisPool, guild: u64) -> ApiResult<Vec<QueueItem>> {
+    let tracks = get(pool, guild).await?;
+
+    cache::del(pool, queue_key(guild)).await?;
+    cache::del(pool, queue_playing_key(guild)).await?;
+    cache::del(pool, queue_loop_key(guild)).await?;
+
+    Ok(tracks)
+}
+
+pub async fn play(pool: &RedisPool, guild: u64) -> ApiResult<()> {
+    if let Some(track) = get_playing_track(pool, guild).await? {
+        player::send(Play::new(GuildId(guild), track.track)).await?;
     }
 
-    pub fn set(&self, queue: Vec<QueueItem>) -> RedisResult<()> {
-        cache::set(self.conn, self.get_queue_key().as_str(), &queue)
-    }
+    Ok(())
+}
 
-    pub fn len(&self) -> ApiResult<usize> {
-        Ok(self.get()?.len())
-    }
+pub async fn play_next(pool: &RedisPool, guild: u64) -> ApiResult<()> {
+    next(pool, guild).await?;
+    play(pool, guild).await?;
 
-    pub fn get_playing(&self) -> ApiResult<i32> {
-        let playing = cache::get(self.conn, self.get_playing_key().as_str())?.unwrap_or(-1);
-        Ok(playing)
-    }
-
-    pub fn get_playing_track(&self) -> ApiResult<Option<QueueItem>> {
-        Ok(self.get_track(self.get_playing()? as u32)?)
-    }
-
-    pub fn set_playing(&self, playing: i32) -> RedisResult<()> {
-        cache::set(self.conn, self.get_playing_key().as_str(), &playing)
-    }
-
-    pub fn get_loop(&self) -> ApiResult<Loop> {
-        let looping = cache::get(self.conn, self.get_loop_key().as_str())?.unwrap_or(Loop::None);
-        Ok(looping)
-    }
-
-    pub fn set_loop(&self, kind: Loop) -> RedisResult<()> {
-        cache::set(self.conn, self.get_loop_key().as_str(), &kind)
-    }
-
-    pub fn add(&self, item: &QueueItem) -> ApiResult<()> {
-        let mut queue = self.get()?;
-        queue.push(item.clone());
-        self.set(queue)?;
-
-        Ok(())
-    }
-
-    pub fn remove(&self, index: u32) -> ApiResult<QueueItem> {
-        let mut queue = self.get()?;
-        let playing = self.get_playing()?;
-
-        let removed = queue.remove(index as usize);
-        self.set(queue)?;
-
-        if (index as i32) < playing {
-            self.set_playing(playing - 1)?;
-        }
-
-        Ok(removed)
-    }
-
-    pub fn shift(&self, index: u32, position: u32) -> ApiResult<()> {
-        let mut queue = self.get()?;
-        let playing = self.get_playing()?;
-
-        let item = queue.remove(index as usize);
-        queue.insert(position as usize, item);
-        self.set(queue)?;
-
-        if (index as i32) < playing && (position as i32) > playing {
-            self.set_playing(playing - 1)?;
-        } else if (index as i32) > playing && (position as i32) < playing {
-            self.set_playing(playing + 1)?;
-        }
-
-        Ok(())
-    }
-
-    pub fn next(&self) -> ApiResult<()> {
-        let queue = self.get()?;
-        let playing = self.get_playing()?;
-        let looping = self.get_loop()?;
-
-        let new_playing = match looping {
-            Loop::None if queue.len() <= (playing + 1) as usize => -1,
-            Loop::Queue if queue.len() <= (playing + 1) as usize => 0,
-            Loop::None | Loop::Queue => playing + 1,
-            Loop::Track => playing,
-        };
-
-        if playing != new_playing {
-            self.set_playing(new_playing)?;
-        }
-
-        Ok(())
-    }
-
-    pub fn shuffle(&self) -> ApiResult<()> {
-        let mut queue = self.get()?;
-        let playing = self.get_playing()?;
-        let mut new_queue = vec![];
-        let mut rng = thread_rng();
-
-        if playing >= 0 {
-            let playing = playing as usize;
-            let mut queue_before = queue[..playing].to_vec();
-            let mut queue_after = queue[(playing + 1)..].to_vec();
-
-            queue_before.shuffle(&mut rng);
-            queue_after.shuffle(&mut rng);
-            new_queue.append(&mut queue_before);
-            new_queue.push(queue[playing].clone());
-            new_queue.append(&mut queue_after);
-        } else {
-            queue.shuffle(&mut rng);
-            new_queue.append(&mut queue);
-        }
-
-        self.set(new_queue)?;
-
-        Ok(())
-    }
-
-    pub fn delete(&self) -> ApiResult<Vec<QueueItem>> {
-        let tracks = self.get()?;
-
-        cache::del(self.conn, self.get_playing_key().as_str())?;
-        cache::del(self.conn, self.get_queue_key().as_str())?;
-        cache::del(self.conn, self.get_loop_key().as_str())?;
-
-        Ok(tracks)
-    }
-
-    pub fn play_with(&self, player: &Ref<'_, GuildId, Player>) -> ApiResult<()> {
-        if let Some(track) = self.get_playing_track()? {
-            let guild = player.guild_id();
-            player.send(Play::new(guild, track.track))?;
-        }
-
-        Ok(())
-    }
+    Ok(())
 }

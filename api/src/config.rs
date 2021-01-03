@@ -1,13 +1,77 @@
-use crate::constants::HTTP_KEEP_ALIVE;
+use crate::routes::ApiResult;
 
-use rocket::config::{Config, Environment, Value};
-use rocket::Rocket;
+use lazy_static::lazy_static;
 use serde::Deserialize;
-use std::collections::HashMap;
 use std::env;
 use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
 use url::Url;
+
+lazy_static! {
+    pub static ref CONFIG: Config = Config {
+        base_uri: get_env("BASE_URI"),
+        environment: get_env_as("ENVIRONMENT"),
+        sentry_dsn: get_env("SENTRY_DSN"),
+        bot_client_id: get_env_as("BOT_CLIENT_ID"),
+        bot_client_secret: get_env("BOT_CLIENT_SECRET"),
+        api_host: get_env("API_HOST"),
+        api_port: get_env_as("API_PORT"),
+        api_workers: get_env_as("API_WORKERS"),
+        api_secret: get_env("API_SECRET"),
+        postgres_host: get_env("POSTGRES_HOST"),
+        postgres_port: get_env_as("POSTGRES_PORT"),
+        postgres_user: get_env("POSTGRES_USER"),
+        postgres_password: get_env("POSTGRES_PASSWORD"),
+        postgres_database: get_env("POSTGRES_DATABASE"),
+        redis_host: get_env("REDIS_HOST"),
+        redis_port: get_env_as("REDIS_PORT"),
+        rabbit_host: get_env("RABBIT_HOST"),
+        rabbit_port: get_env_as("RABBIT_PORT"),
+        andesite_host: get_env("ANDESITE_HOST"),
+        andesite_port: get_env_as("ANDESITE_PORT"),
+        andesite_secret: get_env("ANDESITE_SECRET"),
+    };
+}
+
+#[derive(Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Environment {
+    Development,
+    Production,
+}
+
+impl FromStr for Environment {
+    type Err = serde_json::error::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        serde_json::from_str(format!("\"{}\"", s).as_str())
+    }
+}
+
+#[derive(Debug)]
+pub struct Config {
+    pub base_uri: String,
+    pub environment: Environment,
+    pub sentry_dsn: String,
+    pub bot_client_id: u64,
+    pub bot_client_secret: String,
+    pub api_host: String,
+    pub api_port: u16,
+    pub api_workers: u64,
+    pub api_secret: String,
+    pub postgres_host: String,
+    pub postgres_port: u16,
+    pub postgres_user: String,
+    pub postgres_password: String,
+    pub postgres_database: String,
+    pub redis_host: String,
+    pub redis_port: u16,
+    pub rabbit_host: String,
+    pub rabbit_port: u16,
+    pub andesite_host: String,
+    pub andesite_port: u16,
+    pub andesite_secret: String,
+}
 
 fn get_env(name: &str) -> String {
     env::var(name).unwrap_or_else(|_| panic!("Missing environmental variable: {}", name))
@@ -23,132 +87,47 @@ where
         .unwrap_or_else(|_| panic!("Invalid environmental variable: {}", name))
 }
 
-pub fn get_config(rocket: &Rocket) -> HashMap<String, Value> {
-    rocket
-        .config()
-        .extras
-        .iter()
-        .map(|(k, v)| (k.clone(), v.clone()))
-        .collect()
+pub fn get_api_address() -> ApiResult<SocketAddr> {
+    let addr = SocketAddr::new(IpAddr::from_str(CONFIG.api_host.as_str())?, CONFIG.api_port);
+
+    Ok(addr)
 }
 
-pub fn get_value<'a, T: Deserialize<'a>>(map: &HashMap<String, Value>, key: &str) -> T {
-    map.get(key).unwrap().clone().try_into().unwrap()
+pub fn get_andesite_address() -> ApiResult<SocketAddr> {
+    let addr = SocketAddr::new(
+        IpAddr::from_str(CONFIG.andesite_host.as_str())?,
+        CONFIG.andesite_port,
+    );
+
+    Ok(addr)
 }
 
-pub fn get_api_secret() -> String {
-    get_env("API_SECRET")
-}
+pub fn get_postgres_uri() -> ApiResult<String> {
+    let mut uri = Url::parse("postgres://")?;
 
-pub fn get_sentry_dsn() -> String {
-    get_env("SENTRY_DSN")
-}
-
-pub fn get_environment() -> Environment {
-    match get_env("ENVIRONMENT").as_str() {
-        "production" => Environment::Production,
-        "development" => Environment::Development,
-        _ => panic!("Invalid environment variable: ENVIRONMENT"),
-    }
-}
-
-pub fn get_rocket_config() -> Config {
-    let environment = get_environment();
-    let address = get_env("API_HOST");
-    let port = get_env_as::<u16>("API_PORT");
-    let workers = get_env_as::<u16>("API_WORKERS");
-    let timeout = (HTTP_KEEP_ALIVE / 1000) as u32;
-    let secret = get_env("API_SECRET");
-
-    Config::build(environment)
-        .address(address)
-        .port(port)
-        .workers(workers)
-        .keep_alive(timeout)
-        .secret_key(secret)
-        .extra("databases", get_database_config())
-        .extra("andesite", get_andesite_config())
-        .extra("discord", get_discord_config())
-        .finalize()
-        .expect("Failed to build rocket config")
-}
-
-fn get_postgres_uri() -> Result<String, ()> {
-    let mut uri = Url::parse("postgres://").or(Err(()))?;
-
-    uri.set_host(Some(get_env("POSTGRES_HOST").as_str()))
-        .or(Err(()))?;
-    uri.set_port(Some(get_env_as::<u16>("POSTGRES_PORT")))?;
-    uri.set_username(get_env("POSTGRES_USER").as_str())?;
-    uri.set_password(Some(get_env("POSTGRES_PASSWORD").as_str()))?;
-    uri.set_path(format!("/{}", get_env("POSTGRES_DATABASE")).as_str());
+    uri.set_host(Some(CONFIG.postgres_host.as_str()))?;
+    uri.set_port(Some(CONFIG.postgres_port))?;
+    uri.set_username(CONFIG.postgres_user.as_str())?;
+    uri.set_password(Some(CONFIG.postgres_password.as_str()))?;
+    uri.set_path(format!("/{}", CONFIG.postgres_database).as_str());
 
     Ok(uri.into_string())
 }
 
-fn get_redis_uri() -> Result<String, ()> {
-    let mut uri = Url::parse("redis://").or(Err(()))?;
+pub fn get_redis_uri() -> ApiResult<String> {
+    let mut uri = Url::parse("redis://")?;
 
-    uri.set_host(Some(get_env("REDIS_HOST").as_str()))
-        .or(Err(()))?;
-    uri.set_port(Some(get_env_as::<u16>("REDIS_PORT")))?;
+    uri.set_host(Some(CONFIG.redis_host.as_str()))?;
+    uri.set_port(Some(CONFIG.redis_port))?;
 
     Ok(uri.into_string())
 }
 
-pub fn get_database_config() -> HashMap<String, Value> {
-    let mut database = HashMap::new();
-    let mut pg_config = HashMap::new();
-    let mut redis_config = HashMap::new();
+pub fn get_rabbit_uri() -> ApiResult<String> {
+    let mut uri = Url::parse("amqp://")?;
 
-    let pg_uri = get_postgres_uri().expect("Failed to build postgres config");
-    let redis_uri = get_redis_uri().expect("Failed to build redis config");
+    uri.set_host(Some(CONFIG.rabbit_host.as_str()))?;
+    uri.set_port(Some(CONFIG.rabbit_port))?;
 
-    pg_config.insert("url".to_owned(), Value::from(pg_uri));
-    redis_config.insert("url".to_owned(), Value::from(redis_uri));
-
-    database.insert("postgres".to_owned(), Value::from(pg_config));
-    database.insert("redis".to_owned(), Value::from(redis_config));
-
-    database
-}
-
-fn get_andesite_uri() -> Result<String, ()> {
-    let ip = IpAddr::from_str(get_env("ANDESITE_HOST").as_str()).or(Err(()))?;
-    let port = get_env_as::<u16>("ANDESITE_PORT");
-
-    let uri = SocketAddr::new(ip, port);
-
-    Ok(uri.to_string())
-}
-
-pub fn get_andesite_config() -> HashMap<String, Value> {
-    let mut andesite = HashMap::new();
-
-    let andesite_uri = get_andesite_uri().expect("Failed to build andesite config");
-    let andesite_secret = get_env("ANDESITE_SECRET");
-
-    andesite.insert("uri".to_owned(), Value::from(andesite_uri));
-    andesite.insert("secret".to_owned(), Value::from(andesite_secret));
-
-    andesite
-}
-
-fn get_base_uri() -> Result<String, ()> {
-    let uri = Url::parse(get_env("BASE_URI").as_str()).or(Err(()))?;
     Ok(uri.into_string())
-}
-
-pub fn get_discord_config() -> HashMap<String, Value> {
-    let mut discord = HashMap::new();
-
-    let discord_id = get_env_as::<i64>("BOT_CLIENT_ID");
-    let discord_secret = get_env("BOT_CLIENT_SECRET");
-    let base_uri = get_base_uri().expect("Failed to parse BASE_URI");
-
-    discord.insert("id".to_owned(), Value::from(discord_id));
-    discord.insert("secret".to_owned(), Value::from(discord_secret));
-    discord.insert("uri".to_owned(), Value::from(base_uri));
-
-    discord
 }
