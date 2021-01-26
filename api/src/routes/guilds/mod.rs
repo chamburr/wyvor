@@ -207,10 +207,11 @@ pub async fn patch_guild_settings(
         .map(|role| role.to_string())
         .collect();
 
-    let mut channels = vec![];
-    channels.push(new_settings.playing_log.unwrap_or_default());
-    channels.push(new_settings.player_log.unwrap_or_default());
-    channels.push(new_settings.queue_log.unwrap_or_default());
+    let channels = vec![
+        new_settings.playing_log.unwrap_or_default(),
+        new_settings.player_log.unwrap_or_default(),
+        new_settings.queue_log.unwrap_or_default(),
+    ];
 
     let invalid_channels: Vec<String> = channels
         .into_iter()
