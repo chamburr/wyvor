@@ -11,7 +11,7 @@
               intuitive dashboard, custom effects and more!
             </p>
             <p class="mb-0">
-              Copyright © 2020
+              Copyright © 2020-2021
               <a class="footer-link" target="_blank" rel="noopener" href="https://chamburr.xyz">
                 CHamburr
               </a>
