@@ -1,0 +1,41 @@
+[package]
+name = "wyvor"
+version = "1.0.0"
+authors = ["CHamburr <hi@chamburr.com>"]
+edition = "2021"
+
+[dependencies]
+actix-web = { version = "4.0", default-features = false, features = ["macros"] }
+actix-web-lab = { version = "0.15", default-features = false }
+base64 = { version = "0.13", default-features = false }
+bcrypt = { version = "0.12", default-features = false, features = ["std"] }
+chrono = { version = "0.4", default-features = false, features = ["serde"] }
+diesel = { version = "1.4", default-features = false, features = ["chrono", "postgres", "r2d2"] }
+diesel_migrations = { version = "1.4", default-features = false }
+dotenv = { version = "0.15", default-features = false }
+event-listener = { version = "2.5", default-features = false }
+futures = { version = "0.3", default-features = false, features = ["std"] }
+handlebars = { version = "4.2", default-features = false, features = ["rust-embed"] }
+http = { version = "0.2", default-features = false }
+jsonwebtoken = { version = "8.0", default-features = false }
+lazy_static = { version = "1.4", default-features = false }
+lettre = { version = "0.10.0-rc.5", default-features = false, features = ["smtp-transport", "tokio1-native-tls", "builder"] }
+nanoid = { version = "0.4", default-features = false }
+num-derive = { version = "0.3", default-features = false }
+num-traits = { version = "0.2", default-features = false }
+paste = { version = "1.0", default-features = false }
+percent-encoding = { version = "2.1", default-features = false }
+r2d2 = { version = "0.8", default-features = false }
+rand = { version = "0.8", default-features = false, features = ["std", "std_rng"] }
+redis = { version = "0.21", default-features = false, features = ["tokio-comp"] }
+reqwest = { version = "0.11", default-features = false, features = ["json"] }
+rust-embed = { version = "6.4.0", default-features = false }
+sentry = { version = "0.25", default-features = false, features = ["backtrace", "transport"] }
+serde = { version = "1.0", default-features = false, features = ["derive"] }
+serde_json = { version = "1.0", default-features = false }
+tokio = { version = "1.0", default-features = false, features = ["rt", "rt-multi-thread"] }
+tracing = { version = "0.1", default-features = false }
+tracing-log = { version = "0.1", default-features = false, features = ["env_logger"] }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["ansi", "fmt"] }
+url = { version = "2.1", default-features = false }
+validator = { version = "0.14", default-features = false }

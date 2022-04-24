@@ -1,0 +1,7 @@
+format_strings = true
+imports_granularity = "crate"
+match_block_trailing_comma = true
+unstable_features = true
+use_field_init_shorthand = true
+use_try_shorthand = true
+wrap_comments = true
