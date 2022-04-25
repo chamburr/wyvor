@@ -11,7 +11,7 @@ use crate::{
     config::{Environment, CONFIG},
     db::{get_pg_pool, get_redis_pool, run_migrations},
     error::ApiResult,
-    routes::{basic, spaces, users, tracks},
+    routes::{basic, spaces, tracks, users},
 };
 
 use actix_web::{
