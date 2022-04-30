@@ -6,7 +6,7 @@ use crate::{
     routes::ApiResponse,
 };
 
-use actix_web::{dev::Payload, FromRequest, HttpRequest};
+use actix_web::{dev::Payload, web::Data, FromRequest, HttpRequest};
 use chrono::{Duration, Utc};
 use http::header::AUTHORIZATION;
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation};
@@ -227,8 +227,8 @@ impl FromRequest for User {
     type Future = Pin<Box<dyn Future<Output = Result<Self, Self::Error>>>>;
 
     fn from_request(req: &HttpRequest, _payload: &mut Payload) -> Self::Future {
-        let pool = req.app_data::<PgPool>().unwrap().clone();
-        let redis_pool = req.app_data::<RedisPool>().unwrap().clone();
+        let pool = req.app_data::<Data<PgPool>>().unwrap().clone();
+        let redis_pool = req.app_data::<Data<RedisPool>>().unwrap().clone();
         let token = req.headers().get(AUTHORIZATION).cloned();
 
         Box::pin(async move {

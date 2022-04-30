@@ -1,5 +1,3 @@
-use crate::error::ApiResult;
-
 use serde::Deserialize;
 use std::{
     env,
@@ -112,11 +110,13 @@ impl Config {
     }
 
     pub fn music_uri(&self) -> String {
-        let mut uri = Url::parse("http://").unwrap();
+        let mut uri = Url::parse("http://localhost").unwrap();
 
         uri.set_host(Some(self.music_host.as_str())).unwrap();
         uri.set_port(Some(self.music_port)).unwrap();
 
-        uri.into()
+        let uri: String = uri.into();
+
+        uri.trim_end_matches('/').to_string()
     }
 }

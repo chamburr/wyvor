@@ -22,6 +22,12 @@ pub struct Track {
 
 impl Track {
     fn from_raw(data: &Value) -> Option<Self> {
+        let fee = data["fee"].as_i64();
+
+        if fee != Some(0) && fee != Some(8) {
+            return None;
+        }
+
         let id = data["id"].as_i64();
         let name = data["name"].as_str();
         let artists = data["ar"].as_array().map(|x| {
@@ -47,16 +53,6 @@ impl Track {
         } else {
             None
         }
-    }
-
-    fn from_raws(data: &[Value]) -> Vec<Self> {
-        data.iter()
-            .filter(|x| {
-                let fee = x["fee"].as_i64();
-                fee == Some(0) || fee == Some(8)
-            })
-            .filter_map(|x| Self::from_raw(x))
-            .collect()
     }
 }
 
@@ -104,13 +100,13 @@ impl Client {
         let response = self
             .request(
                 "/cloudsearch",
-                &[("keywords", query.as_str()), ("limit", "100")],
+                &[("keywords", query.as_str()), ("limit", "10")],
             )
             .await?;
 
         response["result"]["songs"]
             .as_array()
-            .map(|x| Track::from_raws(x.as_slice()))
+            .map(|x| x.iter().filter_map(Track::from_raw).collect())
             .ok_or_else(|| Error.into())
     }
 
@@ -131,7 +127,7 @@ impl Client {
 
         response["songs"]
             .as_array()
-            .map(|x| Track::from_raws(x.as_slice()))
+            .map(|x| x.iter().filter_map(Track::from_raw).collect())
             .ok_or_else(|| Error.into())
     }
 
@@ -150,14 +146,17 @@ impl Client {
 
         Ok(response["lrc"]["lyric"].as_str().map(|x| {
             x.split('\n')
-                .skip_while(|&y| y.contains(':'))
+                .skip_while(|&y| y.contains(" : "))
                 .map(|y| {
                     y.chars()
                         .into_iter()
                         .skip_while(|&z| z != ']')
-                        .collect::<String>()
+                        .skip(1)
+                        .collect::<String>() + "\n"
                 })
                 .collect::<String>()
+                .trim()
+                .to_string()
         }))
     }
 }

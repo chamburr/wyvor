@@ -2,11 +2,11 @@ use crate::{
     auth::User,
     db::{PgPool, RedisPool},
     error::ApiResult,
-    mail::Client,
     models::{Account, Space},
     routes::ApiResponse,
 };
 
+use crate::utils::mail::Client;
 use actix_web::{
     get, post,
     web::{Data, Json},
@@ -91,7 +91,7 @@ pub async fn post_auth_register(
         .await?;
 
     ApiResponse::ok()
-        .data(user.to_json(&["password"])?)
+        .data(user.to_json(&["password"]))
         .finish()
 }
 
@@ -191,8 +191,4 @@ pub async fn post_auth_logout(
     user.invalidate_token(&redis_pool, token).await?;
 
     ApiResponse::ok().finish()
-}
-
-pub async fn default_service() -> ApiResult<ApiResponse> {
-    ApiResponse::not_found().finish()
 }

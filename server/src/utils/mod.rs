@@ -1,14 +1,5 @@
-// pub mod music;
-
-// use crate::{error::ApiResult, routes::ApiResponse};
-
-//use actix_web::web::block;
-//use nanoid::nanoid;
-//use std::thread;
-
-// pub mod player;
-// pub mod polling;
-// pub mod queue;
+pub mod mail;
+pub mod music;
 
 // pub fn html_unescape(content: &str) -> String {
 //     content

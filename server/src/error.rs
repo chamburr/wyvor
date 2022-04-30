@@ -1,10 +1,11 @@
-use crate::{music, routes::ApiResponse};
+use crate::{routes::ApiResponse, utils::music};
 
 use actix_web::{
     error::{BlockingError, HttpError},
     http::StatusCode,
     HttpResponse, ResponseError,
 };
+use backtrace::Backtrace;
 use base64::DecodeError;
 use bcrypt::BcryptError;
 use diesel_migrations::RunMigrationsError;
@@ -14,10 +15,12 @@ use lettre::address::AddressError;
 use redis::RedisError;
 use serde_json::Value;
 use std::{
+    error::Error,
     fmt::{self, Display, Formatter},
     io,
     net::AddrParseError,
 };
+use tracing::error;
 use url::ParseError;
 
 pub type ApiResult<T> = Result<T, ApiError>;
@@ -34,7 +37,6 @@ macro_rules! make_api_error {
         $(
             impl From<$ty> for ApiError {
                 fn from(err: $ty) -> Self {
-                    sentry::capture_error(&err);
                     Self::$name(err)
                 }
             }
@@ -54,6 +56,7 @@ make_api_error! {
     IoError(io::Error),
     JsonWebTokenError(jsonwebtoken::errors::Error),
     LettreError(lettre::error::Error),
+    MusicError(music::Error),
     ParseError(ParseError),
     R2d2Error(r2d2::Error),
     RedisError(RedisError),
@@ -62,9 +65,7 @@ make_api_error! {
     RunMigrationsError(RunMigrationsError),
     SerdeJsonError(serde_json::Error),
     SmtpError(lettre::transport::smtp::Error),
-    ToStrError(ToStrError),
-
-    MusicError(music::Error)
+    ToStrError(ToStrError)
 }
 
 impl Display for ApiError {
@@ -73,11 +74,16 @@ impl Display for ApiError {
     }
 }
 
+impl Error for ApiError {}
+
 impl ResponseError for ApiError {
     fn error_response(&self) -> HttpResponse {
         match self {
             Self::CustomError((status, value)) => HttpResponse::build(*status).json(value),
             _ => {
+                sentry::capture_error(&self);
+                error!("Error in response: {:?}", self);
+
                 let res = ApiResponse::internal_server_error();
                 HttpResponse::build(res.status).json(&res.data)
             },
@@ -93,7 +99,6 @@ impl From<ApiResponse> for ApiError {
 
 impl From<actix_web::Error> for ApiError {
     fn from(err: actix_web::Error) -> Self {
-        sentry::capture_error(&err);
         ApiResponse::internal_server_error().into()
     }
 }

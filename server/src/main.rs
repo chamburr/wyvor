@@ -20,21 +20,26 @@ use actix_web::{
     App, HttpServer,
 };
 use dotenv::dotenv;
+use std::env;
 use tracing::error;
 
 mod auth;
 mod config;
 mod db;
 mod error;
-mod mail;
 mod models;
-mod music;
 mod routes;
-// mod utils;
+mod utils;
 
 #[actix_web::main]
 pub async fn main() {
     dotenv().ok();
+
+    env::set_var(
+        "RUST_LOG",
+        env::var("RUST_LOG").unwrap_or("INFO".to_string()),
+    );
+
     tracing_subscriber::fmt::init();
     tracing_log::env_logger::init();
 
@@ -99,7 +104,7 @@ pub async fn real_main() -> ApiResult<()> {
                     .service(users::get_user_me_space)
                     .service(users::delete_user_me_space),
             )
-            .default_service(web::to(basic::default_service))
+            .default_service(web::to(routes::default_service))
     })
     .workers(CONFIG.api_workers as usize)
     .bind(CONFIG.api_address())?

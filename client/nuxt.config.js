@@ -5,8 +5,6 @@ function isDevelopment() {
 }
 
 export default {
-  srcDir: 'client/',
-
   server: {
     host: process.env.HTTP_HOST,
     port: process.env.HTTP_PORT,

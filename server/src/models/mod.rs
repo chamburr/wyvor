@@ -19,7 +19,8 @@ pub use self::{
 #[macro_export]
 macro_rules! db_run {
     ($pool:ident, $body:expr) => {{
-        use crate::error::ApiResult;
+        use $crate::error::ApiResult;
+
         use actix_web::web::block;
 
         let $pool = $pool.clone().get()?;
@@ -34,12 +35,12 @@ pub fn generate_id() -> i64 {
         .unwrap()
 }
 
-pub fn to_json<T: Serialize>(data: &T, exclude: &[&str]) -> ApiResult<Value> {
-    let mut value = serde_json::to_value(data)?;
+pub fn to_json<T: Serialize>(data: &T, exclude: &[&str]) -> Value {
+    let mut value = serde_json::to_value(data).unwrap();
 
     for &key in exclude {
         value.as_object_mut().unwrap().remove(key);
     }
 
-    Ok(value)
+    value
 }

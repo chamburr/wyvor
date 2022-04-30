@@ -53,7 +53,7 @@ impl Member {
         Ok(())
     }
 
-    pub fn to_json(&self, exclude: &[&str]) -> ApiResult<Value> {
+    pub fn to_json(&self, exclude: &[&str]) -> Value {
         models::to_json(self, exclude)
     }
 }

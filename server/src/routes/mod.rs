@@ -59,6 +59,10 @@ impl Responder for ApiResponse {
     }
 }
 
+pub async fn default_service() -> ApiResult<ApiResponse> {
+    ApiResponse::not_found().finish()
+}
+
 macro_rules! make_errors {
     ($($name:ident: $message:literal),*) => {
         use crate::error::ApiResult;

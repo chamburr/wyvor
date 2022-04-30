@@ -2,11 +2,11 @@ use crate::{
     auth::User,
     db::{PgPool, RedisPool},
     error::ApiResult,
-    mail::Client,
     models::{Account, AccountStatus, Member, MemberRole, Space},
     routes::{ApiResponse, ResultExt},
 };
 
+use crate::utils::mail::Client;
 use actix_web::{
     delete, get, patch, post, put,
     web::{Data, Json},
@@ -46,7 +46,7 @@ pub async fn get_user(
 ) -> ApiResult<ApiResponse> {
     if let Some(account) = Account::find(&pool, id as i64).await? {
         ApiResponse::ok()
-            .data(account.to_json(&["email", "password"])?)
+            .data(account.to_json(&["email", "password"]))
             .finish()
     } else {
         ApiResponse::not_found().finish()
@@ -56,7 +56,7 @@ pub async fn get_user(
 #[get("/me")]
 pub async fn get_user_me(user: User) -> ApiResult<ApiResponse> {
     ApiResponse::ok()
-        .data(user.to_json(&["password"])?)
+        .data(user.to_json(&["password"]))
         .finish()
 }
 
@@ -200,11 +200,8 @@ pub async fn get_user_me_spaces(user: User, pool: Data<PgPool>) -> ApiResult<Api
         .into_iter()
         .zip(members.into_iter())
         .map(|(space, member)| {
-            let mut value = space.to_json(&[])?;
-            value
-                .as_object_mut()
-                .unwrap()
-                .insert("member".to_string(), member.to_json(&["space", "account"])?);
+            let mut value = space.to_json(&[]);
+            value["member"] = member.to_json(&["space", "account"]);
             Ok(value)
         })
         .collect::<ApiResult<Vec<Value>>>()?;
@@ -258,11 +255,8 @@ pub async fn get_user_me_space(
         .await?
         .or_not_found()?;
 
-    let mut value = space.to_json(&[])?;
-    value
-        .as_object_mut()
-        .unwrap()
-        .insert("member".to_string(), member.to_json(&["space", "account"])?);
+    let mut value = space.to_json(&[]);
+    value["member"] = member.to_json(&["space", "account"]);
 
     ApiResponse::ok().data(value).finish()
 }
