@@ -14,13 +14,13 @@ use actix_web_lab::extract::Path;
 use serde::Deserialize;
 
 mod member;
+mod playlist;
 // mod player;
-// mod playlist;
 // mod queue;
 
 pub use member::*;
+pub use playlist::*;
 // pub use player::*;
-// pub use playlist::*;
 // pub use queue::*;
 
 #[derive(Debug, Deserialize)]
@@ -33,16 +33,6 @@ pub struct SpaceData {
     pub name: Option<String>,
     pub description: Option<String>,
     pub public: Option<bool>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct NewMemberData {
-    pub username: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct MemberData {
-    pub role: Option<u8>,
 }
 
 #[post("/")]
@@ -107,7 +97,6 @@ pub async fn patch_space(
     }
 
     space.validate()?;
-
     space.update(&pool).await?;
 
     ApiResponse::ok().finish()

@@ -2574,7 +2574,6 @@ version = "1.0.0"
 dependencies = [
  "actix-web",
  "actix-web-lab",
- "backtrace",
  "base64",
  "bcrypt",
  "chrono",

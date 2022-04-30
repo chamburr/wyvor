@@ -1,5 +1,3 @@
-use crate::error::ApiResult;
-
 use nanoid::nanoid;
 use serde::Serialize;
 use serde_json::Value;

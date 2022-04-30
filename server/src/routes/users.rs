@@ -55,9 +55,7 @@ pub async fn get_user(
 
 #[get("/me")]
 pub async fn get_user_me(user: User) -> ApiResult<ApiResponse> {
-    ApiResponse::ok()
-        .data(user.to_json(&["password"]))
-        .finish()
+    ApiResponse::ok().data(user.to_json(&["password"])).finish()
 }
 
 #[patch("/me")]

@@ -152,7 +152,8 @@ impl Client {
                         .into_iter()
                         .skip_while(|&z| z != ']')
                         .skip(1)
-                        .collect::<String>() + "\n"
+                        .collect::<String>()
+                        + "\n"
                 })
                 .collect::<String>()
                 .trim()

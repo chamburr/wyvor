@@ -5,7 +5,6 @@ use actix_web::{
     http::StatusCode,
     HttpResponse, ResponseError,
 };
-use backtrace::Backtrace;
 use base64::DecodeError;
 use bcrypt::BcryptError;
 use diesel_migrations::RunMigrationsError;
@@ -98,7 +97,7 @@ impl From<ApiResponse> for ApiError {
 }
 
 impl From<actix_web::Error> for ApiError {
-    fn from(err: actix_web::Error) -> Self {
+    fn from(_: actix_web::Error) -> Self {
         ApiResponse::internal_server_error().into()
     }
 }

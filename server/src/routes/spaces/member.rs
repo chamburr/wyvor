@@ -3,18 +3,28 @@ use crate::{
     db::PgPool,
     models::{Account, Member, MemberRole, Space},
     routes::{ApiResponse, ResultExt},
-    spaces::{MemberData, NewMemberData},
+    utils::mail::Client,
     ApiResult,
 };
 
-use crate::utils::mail::Client;
 use actix_web::{
     delete, get, patch, post,
     web::{Data, Json},
 };
 use actix_web_lab::extract::Path;
 use num_traits::FromPrimitive;
+use serde::Deserialize;
 use serde_json::Value;
+
+#[derive(Debug, Deserialize)]
+pub struct NewMemberData {
+    pub username: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MemberData {
+    pub role: Option<u8>,
+}
 
 #[get("/{id}/members")]
 pub async fn get_space_members(

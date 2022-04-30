@@ -1,6 +1,5 @@
 #![recursion_limit = "128"]
-#![allow(unused)]
-#![deny(clippy::all, nonstandard_style, rust_2018_idioms, warnings)] //unused, warnings)]
+#![deny(clippy::all, nonstandard_style, rust_2018_idioms)] // unused, warnings)]
 
 #[macro_use]
 extern crate diesel;
@@ -37,7 +36,7 @@ pub async fn main() {
 
     env::set_var(
         "RUST_LOG",
-        env::var("RUST_LOG").unwrap_or("INFO".to_string()),
+        env::var("RUST_LOG").unwrap_or_else(|_| "INFO".to_string()),
     );
 
     tracing_subscriber::fmt::init();
@@ -86,7 +85,12 @@ pub async fn real_main() -> ApiResult<()> {
                     .service(spaces::post_space_members)
                     .service(spaces::get_space_member)
                     .service(spaces::patch_space_member)
-                    .service(spaces::delete_space_member),
+                    .service(spaces::delete_space_member)
+                    .service(spaces::get_space_playlists)
+                    .service(spaces::post_space_playlists)
+                    .service(spaces::get_space_playlist)
+                    .service(spaces::patch_space_playlist)
+                    .service(spaces::delete_space_playlist),
             )
             .service(
                 web::scope("/tracks")

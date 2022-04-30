@@ -90,9 +90,7 @@ pub async fn post_auth_register(
         .send_welcome(user.email.as_str(), user.username.as_str(), token.as_str())
         .await?;
 
-    ApiResponse::ok()
-        .data(user.to_json(&["password"]))
-        .finish()
+    ApiResponse::ok().data(user.to_json(&["password"])).finish()
 }
 
 #[post("/login")]
