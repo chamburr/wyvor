@@ -17,11 +17,11 @@ use serde::Deserialize;
 use serde_json::Value;
 
 // mod player;
-// mod playlist;
+ mod playlist;
 // mod queue;
 
 // pub use player::*;
-// pub use playlist::*;
+ pub use playlist::*;
 // pub use queue::*;
 
 #[derive(Debug, Deserialize)]
@@ -44,6 +44,10 @@ pub struct NewMemberData {
 #[derive(Debug, Deserialize)]
 pub struct MemberData {
     pub role: Option<u8>,
+}
+#[derive(Debug, Deserialize)]
+pub struct NewPlaylistData {
+    pub name: String,
 }
 
 #[post("/")]
