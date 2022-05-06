@@ -73,7 +73,11 @@ pub async fn post_space_members(
             .finish();
     }
 
-    // impose max members
+    if Member::filter_by_space(&pool, id as i64).await?.len() >= 10000 {
+        return ApiResponse::bad_request()
+            .message("Space has reached the maximum member limit.")
+            .finish();
+    }
 
     let space = Space::find(&pool, id as i64).await?.or_not_found()?;
     let member = Member::new(id as i64, account.id, MemberRole::Invited);

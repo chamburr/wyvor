@@ -41,7 +41,11 @@ pub async fn post_spaces(
     pool: Data<PgPool>,
     Json(data): Json<NewSpaceData>,
 ) -> ApiResult<ApiResponse> {
-    // TODO: impose max limit
+    if Member::filter_by_account(&pool, user.id).await?.len() >= 100 {
+        return ApiResponse::bad_request()
+            .message("You are in 100 spaces! You can't create more spaces.")
+            .finish();
+    }
 
     let space = Space::new(data.name);
     let member = Member::new(space.id, user.id, MemberRole::Owner);

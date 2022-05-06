@@ -237,7 +237,11 @@ pub async fn post_user_me_spaces(
 
     member.create(&pool).await?;
 
-    // TODO: impose max limit
+    if Member::filter_by_account(&pool, user.id).await?.len() >= 100 {
+        return ApiResponse::bad_request()
+            .message("You are in 100 spaces! You can't join more spaces.")
+            .finish();
+    }
 
     ApiResponse::ok().finish()
 }
