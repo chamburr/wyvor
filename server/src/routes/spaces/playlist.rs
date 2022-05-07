@@ -17,6 +17,7 @@ use serde_json::Value;
 #[derive(Debug, Deserialize)]
 pub struct NewPlaylistData {
     pub name: String,
+    pub items: Vec<i32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -51,8 +52,12 @@ pub async fn post_space_playlists(
     user.can_write_space(&pool, id as i64).await?;
 
     // TODO: create space playlist
+    let playlist = Playlist::new(id as i64, _data.name, _data.items);
+    playlist.create(&pool).await?;
 
-    ApiResponse::ok().finish()
+    ApiResponse::ok()
+        .data(playlist.to_json(&["space"]))
+        .finish()
 }
 
 #[get("/{id}/playlists/{item}")]
