@@ -154,7 +154,7 @@ impl User {
             pool,
             format!("verify_token:{}", token),
             self.deref(),
-            Duration::hours(24).num_milliseconds() as usize,
+            Duration::days(1).num_milliseconds() as usize,
         )
         .await?;
 

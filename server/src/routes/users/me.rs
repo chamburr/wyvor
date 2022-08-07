@@ -4,9 +4,9 @@ use crate::{
     error::ApiResult,
     models::{Account, AccountStatus, Member, MemberRole, Space},
     routes::{ApiResponse, ResultExt},
+    utils::mail::Client,
 };
 
-use crate::utils::mail::Client;
 use actix_web::{
     delete, get, patch, post, put,
     web::{Data, Json},
@@ -36,21 +36,6 @@ pub struct VerifyData {
 #[derive(Debug, Deserialize)]
 pub struct SpaceData {
     pub id: u64,
-}
-
-#[get("/{id}")]
-pub async fn get_user(
-    _user: User,
-    pool: Data<PgPool>,
-    Path(id): Path<u64>,
-) -> ApiResult<ApiResponse> {
-    if let Some(account) = Account::find(&pool, id as i64).await? {
-        ApiResponse::ok()
-            .data(account.to_json(&["email", "password"]))
-            .finish()
-    } else {
-        ApiResponse::not_found().finish()
-    }
 }
 
 #[get("/me")]
