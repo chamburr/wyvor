@@ -54,8 +54,12 @@ impl Queue {
         self.tracks.push(track);
     }
 
-    pub fn remove(&mut self, index: u32) {
-        self.tracks.remove(index as usize);
+    pub fn insert(&mut self, index: usize, track: Track) {
+        self.tracks.insert(index, track);
+    }
+
+    pub fn remove(&mut self, index: u32) -> Option<Track> {
+        self.tracks.remove(index as usize)
     }
 
     pub fn shift(&mut self, index: u32, position: u32) {
