@@ -1,5 +1,7 @@
 pub mod mail;
 pub mod music;
+pub mod player;
+pub mod queue;
 
 // pub fn html_unescape(content: &str) -> String {
 //     content

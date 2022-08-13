@@ -14,7 +14,9 @@ use actix_web_lab::extract::Path;
 use serde::Deserialize;
 
 mod member;
+mod player;
 mod playlist;
+mod queue;
 
 pub use member::*;
 pub use playlist::*;
