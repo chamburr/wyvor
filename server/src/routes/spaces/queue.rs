@@ -142,7 +142,7 @@ pub async fn post_guild_queue_shuffle(
     let current_track = tracks.remove(player.playing());
     tracks.shuffle();
     tracks.insert(player.playing(), current_track);
-    tracks.update().await?;
+    tracks.update(&redis_pool).await?;
     ApiResponse::ok().finish()
 
 }
@@ -173,7 +173,7 @@ pub async fn put_guild_queue_item_position(
     } else if item > player.playing() and new_position.position <= player.playing() {
         player.set_playing(player.playing() + 1);
     }
-    tracks.update().await?;
+    tracks.update(&redis_pool).await?;
     player.update(&redis_pool).await?;
     ApiResponse::ok().finish()
 }
@@ -197,7 +197,7 @@ pub async fn delete_guild_queue_item(
             .finish();
     }
     tracks.remove(item).await?;
-    tracks.update().await?;
+    tracks.update(&redis_pool).await?;
     if item < player.playing {
         player.set_playing(player.playing() - 1);
     }
