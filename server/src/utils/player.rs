@@ -17,6 +17,7 @@ pub struct PlayerState {
     pub paused: bool,
     pub position: i64,
     pub looping: Loop,
+    pub time: i64,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -50,6 +51,26 @@ impl Player {
     }
 }
 impl Player {
+    pub fn playing(&self) -> i64{
+        self.player.playing
+    }
+
+    pub fn paused(&self) -> bool {
+        self.player.paused 
+    }
+
+    pub fn position(&self) -> i64 {
+        self.player.position 
+    }
+
+    pub fn looping(&self) -> Loop {
+        self.player.looping
+    }
+    
+    pub fn time(&self) -> i64 {
+        self.player.time
+    }
+
     pub fn set_playing(&mut self, playing: i64) {
         self.player.playing = playing;
     }
@@ -64,5 +85,9 @@ impl Player {
 
     pub fn set_looping(&mut self, looping: Loop) {
         self.player.looping = looping;
+    }
+
+    pub fn set_time(&mut self, time: i64) {
+        self.player.time = time;
     }
 }

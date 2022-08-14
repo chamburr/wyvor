@@ -1,20 +1,5 @@
 use crate::{
-    constants::{
-        FILTER_EQUALIZER_BAND_MAX, FILTER_EQUALIZER_BAND_MIN, FILTER_EQUALIZER_GAIN_MAX,
-        FILTER_EQUALIZER_GAIN_MIN, FILTER_KARAOKE_BAND_MAX, FILTER_KARAOKE_BAND_MIN,
-        FILTER_KARAOKE_LEVEL_MAX, FILTER_KARAOKE_LEVEL_MIN, FILTER_KARAOKE_MONO_LEVEL_MAX,
-        FILTER_KARAOKE_MONO_LEVEL_MIN, FILTER_KARAOKE_WIDTH_MAX, FILTER_KARAOKE_WIDTH_MIN,
-        FILTER_TIMESCALE_PITCH_MAX, FILTER_TIMESCALE_PITCH_MIN, FILTER_TIMESCALE_RATE_MAX,
-        FILTER_TIMESCALE_RATE_MIN, FILTER_TIMESCALE_SPEED_MAX, FILTER_TIMESCALE_SPEED_MIN,
-        FILTER_TREMOLO_DEPTH_MAX, FILTER_TREMOLO_DEPTH_MIN, FILTER_TREMOLO_FREQUENCY_MAX,
-        FILTER_TREMOLO_FREQUENCY_MIN, FILTER_VIBRATO_DEPTH_MAX, FILTER_VIBRATO_DEPTH_MIN,
-        FILTER_VIBRATO_FREQUENCY_MAX, FILTER_VIBRATO_FREQUENCY_MIN, VOLUME_MAX,
-    },
     db::{
-        pubsub::{
-            models::{self, Connected},
-            Message,
-        },
         PgPool, RedisPool,
     },
     models::{Validate, ValidateExt},
@@ -34,9 +19,10 @@ use actix_web::{
 };
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use twilight_andesite::model::{Filters, Stop, Update};
-use twilight_model::id::GuildId;
 
+use crate::utils::{Player, PlayerState}
+
+/* EVENTUALLYDO: optimise this
 #[derive(Debug, Deserialize, Serialize)]
 pub struct SimplePlayer {
     pub looping: Option<Loop>,
@@ -46,97 +32,8 @@ pub struct SimplePlayer {
     pub volume: Option<u64>,
     pub filters: Option<Filters>,
 }
-
-impl Validate for SimplePlayer {
-    fn check(&self) -> ApiResult<()> {
-        if let Some(volume) = self.volume {
-            (volume as usize).check_max(VOLUME_MAX, "volume")?;
-        }
-
-        if let Some(filters) = &self.filters {
-            if let Some(equalizer) = &filters.equalizer {
-                for band in &equalizer.bands {
-                    band.band.check_btw(
-                        FILTER_EQUALIZER_BAND_MIN as i64,
-                        FILTER_EQUALIZER_BAND_MAX as i64,
-                        "equalizer band",
-                    )?;
-                    band.gain.check_btw(
-                        FILTER_EQUALIZER_GAIN_MIN,
-                        FILTER_EQUALIZER_GAIN_MAX,
-                        "equalizer band gain",
-                    )?;
-                }
-            }
-            if let Some(timescale) = &filters.timescale {
-                timescale.speed.check_btw(
-                    FILTER_TIMESCALE_SPEED_MIN,
-                    FILTER_TIMESCALE_SPEED_MAX,
-                    "timescale speed",
-                )?;
-                timescale.pitch.check_btw(
-                    FILTER_TIMESCALE_PITCH_MIN,
-                    FILTER_TIMESCALE_PITCH_MAX,
-                    "timescale pitch",
-                )?;
-                timescale.rate.check_btw(
-                    FILTER_TIMESCALE_RATE_MIN,
-                    FILTER_TIMESCALE_RATE_MAX,
-                    "timescale rate",
-                )?;
-            }
-            if let Some(tremolo) = &filters.tremolo {
-                tremolo.depth.check_btw(
-                    FILTER_TREMOLO_DEPTH_MIN,
-                    FILTER_TREMOLO_DEPTH_MAX,
-                    "tremolo depth",
-                )?;
-                tremolo.frequency.check_btw(
-                    FILTER_TREMOLO_FREQUENCY_MIN,
-                    FILTER_TREMOLO_FREQUENCY_MAX,
-                    "tremolo frequency",
-                )?;
-            }
-            if let Some(vibrato) = &filters.vibrato {
-                vibrato.depth.check_btw(
-                    FILTER_VIBRATO_DEPTH_MIN,
-                    FILTER_VIBRATO_DEPTH_MAX,
-                    "vibrato depth",
-                )?;
-                vibrato.frequency.check_btw(
-                    FILTER_VIBRATO_FREQUENCY_MIN,
-                    FILTER_VIBRATO_FREQUENCY_MAX,
-                    "vibrato frequency",
-                )?;
-            }
-            if let Some(karaoke) = &filters.karaoke {
-                karaoke.level.check_btw(
-                    FILTER_KARAOKE_LEVEL_MIN,
-                    FILTER_KARAOKE_LEVEL_MAX,
-                    "karaoke level",
-                )?;
-                karaoke.mono_level.check_btw(
-                    FILTER_KARAOKE_MONO_LEVEL_MIN,
-                    FILTER_KARAOKE_MONO_LEVEL_MAX,
-                    "karaoke mono level",
-                )?;
-                karaoke.filter_band.check_btw(
-                    FILTER_KARAOKE_BAND_MIN,
-                    FILTER_KARAOKE_BAND_MAX,
-                    "karaoke band",
-                )?;
-                karaoke.filter_width.check_btw(
-                    FILTER_KARAOKE_WIDTH_MIN,
-                    FILTER_KARAOKE_WIDTH_MAX,
-                    "karaoke width",
-                )?;
-            }
-        }
-
-        Ok(())
-    }
-}
-
+*/
+#[derive(Debug, Deserialize, Serialize)]
 #[get("/{id}/player")]
 pub async fn get_guild_player(
     user: User,
@@ -146,40 +43,16 @@ pub async fn get_guild_player(
     user.has_read_guild(&redis_pool, id).await?;
     user.is_connected(&redis_pool, id, false).await?;
 
-    let player = get_player(&redis_pool, id).await?;
+    let mut player = Player::new(&redis_pool, id).await?;
+    position = player.position();
+    if position!=-1 && !paused {
+        let difference = Utc::now().timestamp_millis() - player.time();
 
-    let mut paused = player.paused;
-    let mut position = player.position;
-    let looping = queue::get_loop(&redis_pool, id).await?;
-    let playing = queue::get_playing(&redis_pool, id).await?;
-
-    if position.is_none() {
-        paused = true;
+        player.set_position(player.position() + difference);
     }
+    player.set_position(position);
+    player.set_time(Utc::now().timestamp_millis());
 
-    if position.is_some() && !paused {
-        let mut difference = Utc::now().timestamp_millis() - player.time;
-        if let Some(timescale) = &player.filters.timescale {
-            difference = ((difference as f64) * timescale.speed) as i64;
-        }
-
-        position = position.map(|player_position| {
-            let mut new_position = player_position + difference;
-            if new_position < 0 {
-                new_position = 0;
-            }
-            new_position
-        });
-    }
-
-    let player = SimplePlayer {
-        looping: Some(looping),
-        playing: Some(playing),
-        position: Some(position.unwrap_or(0) as u64),
-        paused: Some(paused),
-        volume: Some(player.volume as u64),
-        filters: Some(player.filters),
-    };
 
     ApiResponse::ok().data(player).finish()
 }
@@ -192,7 +65,7 @@ pub async fn post_guild_player(
     Path(id): Path<u64>,
 ) -> ApiResult<ApiResponse> {
     user.has_read_guild(&redis_pool, id).await?;
-
+    
     let connected: Option<Connected> = Message::get_connected(id, None)
         .send_and_wait(&redis_pool)
         .await?;
@@ -236,73 +109,42 @@ pub async fn patch_guild_player(
     pool: Data<PgPool>,
     redis_pool: Data<RedisPool>,
     Path(id): Path<u64>,
-    Json(mut new_player): Json<SimplePlayer>,
+    Json(mut new_player): Json<PlayerState>,
 ) -> ApiResult<ApiResponse> {
     user.has_read_guild(&redis_pool, id).await?;
     user.is_connected(&redis_pool, id, true).await?;
-
-    new_player.check()?;
-
-    let player = get_player(&redis_pool, id).await?;
-
-    if let Some(paused) = new_player.paused {
-        if !paused && player.position.is_none() {
-            if queue::get_playing(&redis_pool, id).await? < 0 {
-                queue::next(&redis_pool, id).await?;
-            }
-
-            queue::play(&redis_pool, id).await?;
-
-            return ApiResponse::ok().finish();
-        }
-    }
-
+    // TODO: Implement checks in the playerstate
+    let mut player = Player::new(&redis_pool, id).await?;
+    let queue = Queue::new(&redis_pool, id).await?;
+    
+    player.set_paused(new_player.paused);
     user.has_manage_player(&pool, &redis_pool, id).await?;
 
-    if let Some(playing) = new_player.playing {
-        if playing >= queue::len(&redis_pool, id).await? as i32 || playing < -1 {
-            return ApiResponse::bad_request()
-                .message("The requested track to play does not exist.")
-                .finish();
+    player.set_playing(new_player.playing);
+    player.set_looping(new_player.looping);
+    player.set_position(new_player.position);
+    player.set_time(new_player.time);
+
+    if player.paused() = new_player.paused {
+        if !player.paused() && player.position == -1 { // HELP: When it's unpaused, it needs to start??
+            player.set_position(0);
         }
-
-        queue::set_playing(&redis_pool, id, playing).await?;
-
-        if playing == -1 {
-            player::send(Stop::new(GuildId(id))).await?;
-            return ApiResponse::ok().finish();
-        }
-
-        queue::play(&redis_pool, id).await?;
     }
 
-    if let Some(looping) = &new_player.looping {
-        queue::set_loop(&redis_pool, id, looping).await?;
+    if new_player.playing >= queue.get_length() as i32 || playing < -1 {
+        return ApiResponse::bad_request()
+            .message("The requested track to play does not exist.")
+            .finish();
     }
 
-    player::send(Update::new(
-        GuildId(id),
-        new_player.paused,
-        new_player.position.map(|position| position as i64),
-        new_player.volume.map(|volume| volume as i64),
-        new_player.filters.clone(),
-    ))
-    .await?;
-
-    if new_player.position.is_some() {
-        new_player.position = player.position.map(|position| position as u64)
-    }
-
-    log::register(
-        &pool,
-        &redis_pool,
-        id,
-        user,
-        LogInfo::PlayerUpdate(new_player),
-    )
-    .await?;
-
-    polling::notify(id)?;
+    
+    /*
+    if new_player.playing == -1 {
+        player::send(Stop::new(GuildId(id))).await?;
+        return ApiResponse::ok().finish();
+    } */
+    
+    player.update(&redis_pool).await?;
 
     ApiResponse::ok().finish()
 }

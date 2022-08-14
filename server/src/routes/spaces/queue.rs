@@ -58,7 +58,6 @@ pub async fn post_guild_queue( // append something into the queue
     //let config = cache::get_config(&pool, &redis_pool, id).await?;
     let tracks = Queue::new(&redis_pool, id).await?;
     
-    \
     // TODO: this whole part
     if tracks.len() >= 200 {
         return ApiResponse::bad_request()
@@ -97,7 +96,7 @@ pub async fn post_guild_queue( // append something into the queue
     queue::add(&redis_pool, id, track.clone()).await?;
 
     let player = get_player(&redis_pool, id).await?;
-    if player.position.is_none() {
+    if player.position().is_none() {
         queue::set_playing(&redis_pool, id, tracks.len() as i32).await?;
         queue::play(&redis_pool, id).await?;
     }
@@ -120,10 +119,10 @@ pub async fn delete_guild_queue(
     user.is_connected(&redis_pool, id, true).await?;
 
     let tracks = Queue::new(&redis_pool, id).await?;
-    let player = Player::new(&redis_pool, id).await?;
+    let mut player = Player::new(&redis_pool, id).await?;
     player.set_playing(-1);
     tracks.delete().await?;
-    player.update().await?;
+    player.update(&redis_pool).await?;
 
     ApiResponse::ok().finish()
 }
@@ -138,11 +137,11 @@ pub async fn post_guild_queue_shuffle(
     user.has_manage_queue(&pool, &redis_pool, id).await?;
     user.is_connected(&redis_pool, id, true).await?;
 
-    let tracks = Queue::new(&redis_pool, id).await?;
+    let mut tracks = Queue::new(&redis_pool, id).await?;
     let player = Player::new(&redis_pool, id).await?;
-    let current_track = tracks.remove(player.playing);
+    let current_track = tracks.remove(player.playing());
     tracks.shuffle();
-    tracks.insert(player.playing, current_track);
+    tracks.insert(player.playing(), current_track);
     tracks.update().await?;
     ApiResponse::ok().finish()
 
@@ -158,9 +157,9 @@ pub async fn put_guild_queue_item_position(
 ) -> ApiResult<ApiResponse> {
     user.has_manage_queue(&pool, &redis_pool, id).await?;
     user.is_connected(&redis_pool, id, true).await?;
-    let tracks = Queue::new(&redis_pool, id).await?;
-    let player = Player::new(&redis_pool, id).await?;
-    if item == player.playing {
+    let mut tracks = Queue::new(&redis_pool, id).await?;
+    let mut player = Player::new(&redis_pool, id).await?;
+    if item == player.playing() {
         return ApiResponse::bad_request()
             .message("You cannot move the currently playing track.")
             .finish();
@@ -169,13 +168,13 @@ pub async fn put_guild_queue_item_position(
     let current_track = tracks.remove(item).await?;
     tracks.insert(new_position.position, current_track).await?;
     
-    if item < player.playing && new_position.position > player.playing {
-        player.set_playing(player.playing - 1);
-    } else if item > player.playing and new_position.position <= player.playing {
-        player.set_playing(player.playing + 1);
+    if item < player.playing() && new_position.position > player.playing() {
+        player.set_playing(player.playing() - 1);
+    } else if item > player.playing() and new_position.position <= player.playing() {
+        player.set_playing(player.playing() + 1);
     }
     tracks.update().await?;
-    player.update().await?;
+    player.update(&redis_pool).await?;
     ApiResponse::ok().finish()
 }
 
@@ -189,10 +188,10 @@ pub async fn delete_guild_queue_item(
     user.has_manage_queue(&pool, &redis_pool, id).await?;
     user.is_connected(&redis_pool, id, true).await?;
 
-    tracks = Queue::new(&redis_pool, id).await?;
-    player = Player::new(&redis_pool, id).await?;
+    let mut tracks = Queue::new(&redis_pool, id).await?;
+    let mut player = Player::new(&redis_pool, id).await?;
 
-    if player.playing == item as i32 {
+    if player.playing() == item as i32 {
         return ApiResponse::bad_request()
             .message("The currently playing track cannot be removed.")
             .finish();
@@ -200,9 +199,9 @@ pub async fn delete_guild_queue_item(
     tracks.remove(item).await?;
     tracks.update().await?;
     if item < player.playing {
-        player.set_playing(player.playing - 1);
+        player.set_playing(player.playing() - 1);
     }
-    player.update().await?;
+    player.update(&redis_pool).await?;
 
     ApiResponse::ok().finish()
 }
