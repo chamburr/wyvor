@@ -29,7 +29,7 @@ mod error;
 mod models;
 mod routes;
 mod utils;
-mod websockets
+mod websockets;
 #[actix_web::main]
 pub async fn main() {
     dotenv().ok();

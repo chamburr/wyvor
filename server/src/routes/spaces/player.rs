@@ -1,26 +1,23 @@
 use crate::{
+    auth::User,
     db::{
         PgPool, RedisPool,
     },
-    models::{Validate, ValidateExt},
     routes::{ApiResponse, ApiResult},
     utils::{
-        auth_old::User,
-        log::{self, LogInfo},
-        player::{self, get_player},
-        polling,
-        queue::{self, Loop},
+        player::Player,
+        player::PlayerState,
+        queue::Queue,
     },
 };
-
+use actix_web_lab::extract::Path;
 use actix_web::{
     delete, get, patch, post,
-    web::{Data, Json, Path},
+    web::{Data, Json},
 };
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
-use crate::utils::{Player, PlayerState}
 
 /* EVENTUALLYDO: optimise this
 #[derive(Debug, Deserialize, Serialize)]
@@ -33,19 +30,19 @@ pub struct SimplePlayer {
     pub filters: Option<Filters>,
 }
 */
-#[derive(Debug, Deserialize, Serialize)]
+
 #[get("/{id}/player")]
 pub async fn get_guild_player(
     user: User,
     redis_pool: Data<RedisPool>,
+    pool: Data<PgPool>,
     Path(id): Path<u64>,
 ) -> ApiResult<ApiResponse> {
-    user.has_read_guild(&redis_pool, id).await?;
-    user.is_connected(&redis_pool, id, false).await?;
+    user.can_read_space(&pool, id as i64).await?;
 
-    let mut player = Player::new(&redis_pool, id).await?;
-    position = player.position();
-    if position!=-1 && !paused {
+    let mut player = Player::new(&redis_pool, id as i64).await?;
+    let position = player.position();
+    if position!=-1 && !player.paused() {
         let difference = Utc::now().timestamp_millis() - player.time();
 
         player.set_position(player.position() + difference);
@@ -56,7 +53,7 @@ pub async fn get_guild_player(
 
     ApiResponse::ok().data(player).finish()
 }
-
+/*
 #[post("/{id}/player")]
 pub async fn post_guild_player(
     user: User,
@@ -102,7 +99,7 @@ pub async fn post_guild_player(
 
     ApiResponse::ok().finish()
 }
-
+*/
 #[patch("/{id}/player")]
 pub async fn patch_guild_player(
     user: User,
@@ -111,14 +108,13 @@ pub async fn patch_guild_player(
     Path(id): Path<u64>,
     Json(mut new_player): Json<PlayerState>,
 ) -> ApiResult<ApiResponse> {
-    user.has_read_guild(&redis_pool, id).await?;
-    user.is_connected(&redis_pool, id, true).await?;
+    user.can_read_space(&pool, id as i64).await?;
     // TODO: Implement checks in the playerstate
-    let mut player = Player::new(&redis_pool, id).await?;
-    let queue = Queue::new(&redis_pool, id).await?;
+    let mut player = Player::new(&redis_pool, id as i64).await?;
+    let queue = Queue::new(&redis_pool, id as i64).await?;
     
     player.set_paused(new_player.paused);
-    user.has_manage_player(&pool, &redis_pool, id).await?;
+    user.can_manage_space(&pool, id as i64).await?;
 
     player.set_playing(new_player.playing);
     player.set_looping(new_player.looping);
@@ -131,7 +127,7 @@ pub async fn patch_guild_player(
         }
     }
 
-    if new_player.playing >= queue.get_length() as i32 || playing < -1 {
+    if new_player.playing >= queue.get_length() as i64 || player.playing() < -1 {
         return ApiResponse::bad_request()
             .message("The requested track to play does not exist.")
             .finish();
@@ -156,29 +152,9 @@ pub async fn delete_guild_player(
     redis_pool: Data<RedisPool>,
     Path(id): Path<u64>,
 ) -> ApiResult<ApiResponse> {
-    user.has_manage_player(&pool, &redis_pool, id).await?;
-    user.is_connected(&redis_pool, id, true).await?;
 
-    let connected: Option<Connected> = Message::get_connected(id, None)
-        .send_and_wait(&redis_pool)
-        .await?;
-
-    if let Some(connected) = connected {
-        log::register(
-            &pool,
-            &redis_pool,
-            id,
-            user,
-            LogInfo::PlayerRemove(connected.channel as u64),
-        )
-        .await?;
-    }
-
-    Message::set_connected(id, None)
-        .send_and_pause(&redis_pool)
-        .await?;
-
-    polling::notify(id)?;
-
+    user.can_manage_space(&pool, id as i64).await?;
+    // TOOD: this whole function
     ApiResponse::ok().finish()
+
 }

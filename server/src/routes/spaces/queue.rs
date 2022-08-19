@@ -1,16 +1,14 @@
 use crate::{
     db::{cache, PgPool, RedisPool},
-    routes::{ApiResponse, ApiResult, OptionExt},
+    routes::{ApiResponse, ApiResult},
+    auth::User,
     utils::{
-        auth_old::User,
-        log::{self, LogInfo},
-        player,
-        player::{decode_track, get_player},
-        polling,
-        queue::{self, QueueItem},
+        queue::{self},
     },
 };
-use crate::utils::Queue 
+use crate::utils::player::Player;
+use crate::utils::queue::Queue;
+use actix_web_lab::extract::Path;
 #[derive(Debug, Deserialize)]
 pub struct SimpleQueueItem {
     pub track: String,
@@ -23,7 +21,7 @@ pub struct SimplePosition {
 
 use actix_web::{
     delete, get, post, put,
-    web::{Data, Json, Path},
+    web::{Data, Json},
 };
 
 use serde::Deserialize;
@@ -34,16 +32,16 @@ use serde::Deserialize;
 pub async fn get_guild_queue(
     user: User,
     redis_pool: Data<RedisPool>,
+    pg_pool: Data<PgPool>,
     Path(id): Path<u64>,
 ) -> ApiResult<ApiResponse> {
-    user.has_read_guild(&redis_pool, id).await?;
-    user.is_connected(&redis_pool, id, false).await?;
+    user.can_read_space(&pg_pool, id as i64).await?;
 
-    let tracks = Queue::new(&redis_pool, id).await?;
+    let tracks = Queue::new(&redis_pool, id as i64).await?;
 
     ApiResponse::ok().data(tracks).finish()
 }
-
+/*
 #[post("/{id}/queue")]
 pub async fn post_guild_queue( // append something into the queue
     user: User,
@@ -52,11 +50,10 @@ pub async fn post_guild_queue( // append something into the queue
     Path(id): Path<u64>,
     Json(item): Json<SimpleQueueItem>,
 ) -> ApiResult<ApiResponse> {
-    user.has_manage_track(&pool, &redis_pool, id).await?;
-    user.is_connected(&redis_pool, id, true).await?;
+    user.can_manage_space(&pool, id as i64).await?;
 
     //let config = cache::get_config(&pool, &redis_pool, id).await?;
-    let tracks = Queue::new(&redis_pool, id).await?;
+    let tracks = Queue::new(&redis_pool, id as i64).await?;
     
     // TODO: this whole part
     if tracks.len() >= 200 {
@@ -107,7 +104,7 @@ pub async fn post_guild_queue( // append something into the queue
 
     ApiResponse::ok().finish()
 }
-
+*/
 #[delete("/{id}/queue")]
 pub async fn delete_guild_queue(
     user: User,
@@ -115,13 +112,12 @@ pub async fn delete_guild_queue(
     redis_pool: Data<RedisPool>,
     Path(id): Path<u64>,
 ) -> ApiResult<ApiResponse> {
-    user.has_manage_queue(&pool, &redis_pool, id).await?;
-    user.is_connected(&redis_pool, id, true).await?;
+    user.can_manage_space(&pool, id as i64).await?;
 
-    let tracks = Queue::new(&redis_pool, id).await?;
-    let mut player = Player::new(&redis_pool, id).await?;
+    let tracks = Queue::new(&redis_pool, id as i64).await?;
+    let mut player = Player::new(&redis_pool, id as i64).await?;
     player.set_playing(-1);
-    tracks.delete().await?;
+    tracks.delete(&redis_pool).await?;
     player.update(&redis_pool).await?;
 
     ApiResponse::ok().finish()
@@ -134,14 +130,13 @@ pub async fn post_guild_queue_shuffle(
     redis_pool: Data<RedisPool>,
     Path(id): Path<u64>,
 ) -> ApiResult<ApiResponse> {
-    user.has_manage_queue(&pool, &redis_pool, id).await?;
-    user.is_connected(&redis_pool, id, true).await?;
+    user.can_manage_space(&pool, id as i64).await?;
 
-    let mut tracks = Queue::new(&redis_pool, id).await?;
-    let player = Player::new(&redis_pool, id).await?;
-    let current_track = tracks.remove(player.playing());
+    let mut tracks = Queue::new(&redis_pool, id as i64).await?;
+    let player = Player::new(&redis_pool, id as i64).await?;
+    let current_track = tracks.remove(player.playing() as u32)?;
     tracks.shuffle();
-    tracks.insert(player.playing(), current_track);
+    tracks.insert(player.playing() as usize, current_track);
     tracks.update(&redis_pool).await?;
     ApiResponse::ok().finish()
 
@@ -155,10 +150,9 @@ pub async fn put_guild_queue_item_position(
     Path((id, item)): Path<(u64, u32)>,
     Json(new_position): Json<SimplePosition>,
 ) -> ApiResult<ApiResponse> {
-    user.has_manage_queue(&pool, &redis_pool, id).await?;
-    user.is_connected(&redis_pool, id, true).await?;
-    let mut tracks = Queue::new(&redis_pool, id).await?;
-    let mut player = Player::new(&redis_pool, id).await?;
+    user.can_manage_space(&pool, id as i64).await?;
+    let mut tracks = Queue::new(&redis_pool, id as i64).await?;
+    let mut player = Player::new(&redis_pool, id as i64).await?;
     if item == player.playing() {
         return ApiResponse::bad_request()
             .message("You cannot move the currently playing track.")
@@ -166,11 +160,11 @@ pub async fn put_guild_queue_item_position(
     }
 
     let current_track = tracks.remove(item).await?;
-    tracks.insert(new_position.position, current_track).await?;
+    tracks.insert(new_position.position as usize, current_track).await?;
     
-    if item < player.playing() && new_position.position > player.playing() {
+    if item < (player.playing() as u32) && new_position.position > (player.playing() as u32) {
         player.set_playing(player.playing() - 1);
-    } else if item > player.playing() and new_position.position <= player.playing() {
+    } else if item > (player.playing() as u32) && new_position.position <= (player.playing() as u32) {
         player.set_playing(player.playing() + 1);
     }
     tracks.update(&redis_pool).await?;
@@ -185,11 +179,10 @@ pub async fn delete_guild_queue_item(
     redis_pool: Data<RedisPool>,
     Path((id, item)): Path<(u64, u32)>,
 ) -> ApiResult<ApiResponse> {
-    user.has_manage_queue(&pool, &redis_pool, id).await?;
-    user.is_connected(&redis_pool, id, true).await?;
+    user.can_manage_space(&pool, id as i64).await?;
 
-    let mut tracks = Queue::new(&redis_pool, id).await?;
-    let mut player = Player::new(&redis_pool, id).await?;
+    let mut tracks = Queue::new(&redis_pool, id as i64).await?;
+    let mut player = Player::new(&redis_pool, id as i64).await?;
 
     if player.playing() == item as i32 {
         return ApiResponse::bad_request()
