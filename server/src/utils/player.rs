@@ -1,6 +1,6 @@
 use crate::{
     db::{cache, RedisPool},
-    routes::ApiResult,
+    error::ApiResult,
 };
 
 use serde::{Deserialize, Serialize};
@@ -11,7 +11,7 @@ pub struct Player {
     pub player: PlayerState,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 pub struct PlayerState {
     pub playing: i64,
     pub paused: bool,
@@ -20,9 +20,10 @@ pub struct PlayerState {
     pub time: i64,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Loop {
+    #[default]
     None,
     Track,
     Queue,

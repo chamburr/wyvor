@@ -1,12 +1,11 @@
 use crate::{
     db::{cache, RedisPool},
-    routes::ApiResult,
+    error::ApiResult,
     utils::music::Track,
 };
 
 use rand::{seq::SliceRandom, thread_rng};
 use serde::{Deserialize, Serialize};
-use std::ops::{Deref, DerefMut};
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Queue {

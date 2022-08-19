@@ -1,10 +1,7 @@
 use crate::{
-    db::{cache, PgPool, RedisPool},
+    db::{PgPool, RedisPool},
     routes::{ApiResponse, ApiResult},
     auth::User,
-    utils::{
-        queue::{self},
-    },
 };
 use crate::utils::player::Player;
 use crate::utils::queue::Queue;
