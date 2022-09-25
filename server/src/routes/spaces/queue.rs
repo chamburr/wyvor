@@ -131,7 +131,7 @@ pub async fn post_guild_queue_shuffle(
 
     let mut tracks = Queue::new(&redis_pool, id as i64).await?;
     let player = Player::new(&redis_pool, id as i64).await?;
-    let current_track = tracks.remove(player.playing() as u32)?;
+    let current_track = tracks.remove(player.playing() as u32);
     tracks.shuffle();
     tracks.insert(player.playing() as usize, current_track);
     tracks.update(&redis_pool).await?;
@@ -150,14 +150,14 @@ pub async fn put_guild_queue_item_position(
     user.can_manage_space(&pool, id as i64).await?;
     let mut tracks = Queue::new(&redis_pool, id as i64).await?;
     let mut player = Player::new(&redis_pool, id as i64).await?;
-    if item == player.playing() {
+    if item as i64 == player.playing() {
         return ApiResponse::bad_request()
             .message("You cannot move the currently playing track.")
             .finish();
     }
 
-    let current_track = tracks.remove(item).await?;
-    tracks.insert(new_position.position as usize, current_track).await?;
+    let current_track = tracks.remove(item);
+    tracks.insert(new_position.position as usize, current_track);
     
     if item < (player.playing() as u32) && new_position.position > (player.playing() as u32) {
         player.set_playing(player.playing() - 1);
@@ -181,14 +181,14 @@ pub async fn delete_guild_queue_item(
     let mut tracks = Queue::new(&redis_pool, id as i64).await?;
     let mut player = Player::new(&redis_pool, id as i64).await?;
 
-    if player.playing() == item as i32 {
+    if player.playing() == item as i64 {
         return ApiResponse::bad_request()
             .message("The currently playing track cannot be removed.")
             .finish();
     }
-    tracks.remove(item).await?;
+    tracks.remove(item);
     tracks.update(&redis_pool).await?;
-    if item < player.playing {
+    if (item as i64)< player.playing() {
         player.set_playing(player.playing() - 1);
     }
     player.update(&redis_pool).await?;

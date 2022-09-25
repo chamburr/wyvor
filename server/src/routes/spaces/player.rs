@@ -120,8 +120,8 @@ pub async fn patch_guild_player(
     player.set_position(new_player.position);
     player.set_time(new_player.time);
 
-    if player.paused() = new_player.paused {
-        if !player.paused() && player.position == -1 { // HELP: When it's unpaused, it needs to start??
+    if player.paused() == new_player.paused {
+        if !player.paused() && player.position() == -1 { // HELP: When it's unpaused, it needs to start??
             player.set_position(0);
         }
     }

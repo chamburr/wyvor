@@ -23,7 +23,7 @@ impl Queue {
     }
 
     pub async fn update(&self, redis_pool: &RedisPool) -> ApiResult<()> {
-        cache::set(redis_pool, format!("queue:{}", self.space), self.tracks.as_slice())
+        cache::set(redis_pool, format!("queue:{}", self.space), &self.tracks)
             .await?;
 
         Ok(())
@@ -42,7 +42,7 @@ impl Queue {
     }
 
     pub fn get_index(&self, index: u32) -> Option<&Track> {
-        self.tracks.get(index)
+        self.tracks.get(index as usize)
     }
 
     pub fn get_length(&self) -> usize {
@@ -57,7 +57,7 @@ impl Queue {
         self.tracks.insert(index, track);
     }
 
-    pub fn remove(&mut self, index: u32) -> Option<Track> {
+    pub fn remove(&mut self, index: u32) -> Track {
         self.tracks.remove(index as usize)
     }
 
