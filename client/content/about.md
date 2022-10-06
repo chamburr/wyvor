@@ -3,7 +3,7 @@
 Developer, Administrator
 
 - Image: https://cdn.discordapp.com/avatars/446290930723717120/80405a7b286dfaa5b64719e9794c203e.png
-- Website: https://chamburr.xyz
+- Website: https://chamburr.com
 - GitHub: https://github.com/chamburr
 - Twitter: https://twitter.com/chamburr22
 - Reddit: https://www.reddit.com/user/chamburr22
