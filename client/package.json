@@ -1,7 +1,6 @@
 {
   "name": "wyvor",
   "version": "1.0.0",
-  "author": "CHamburr <hi@chamburr.com>",
   "scripts": {
     "dev": "cross-env NODE_ENV=development nuxt",
     "start": "cross-env NODE_ENV=production nuxt start",
