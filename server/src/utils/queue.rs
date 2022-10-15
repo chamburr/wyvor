@@ -7,7 +7,11 @@ use crate::{
 use rand::{seq::SliceRandom, thread_rng};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Deserialize, Serialize)]
+
+use actix::prelude::*;
+#[derive(Message)]
+#[rtype(result = "()")]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Queue {
     pub space: i64,
     pub tracks: Vec<Track>,

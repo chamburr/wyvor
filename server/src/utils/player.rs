@@ -4,14 +4,18 @@ use crate::{
 };
 
 use serde::{Deserialize, Serialize};
+use actix::prelude::*;
 
-#[derive(Debug, Serialize)]
+#[derive(Message)]
+#[rtype(result = "()")]
+#[derive(Debug, Serialize, Copy, Clone)]
 pub struct Player {
     pub space: i64,
     pub player: PlayerState,
 }
-
-#[derive(Debug, Default, Deserialize, Serialize)]
+#[derive(Message)]
+#[rtype(result = "()")]
+#[derive(Debug, Default, Deserialize, Serialize, Copy, Clone)]
 pub struct PlayerState {
     pub playing: i64,
     pub paused: bool,
@@ -20,7 +24,7 @@ pub struct PlayerState {
     pub time: i64,
 }
 
-#[derive(Debug, Default, Deserialize, Serialize)]
+#[derive(Debug, Default, Deserialize, Serialize,  Clone, Copy)]
 #[serde(rename_all = "lowercase")]
 pub enum Loop {
     #[default]

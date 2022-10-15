@@ -10,7 +10,7 @@ lazy_static! {
     static ref MUSIC_URI: String = CONFIG.music_uri();
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Track {
     pub id: i64,
     pub name: String,

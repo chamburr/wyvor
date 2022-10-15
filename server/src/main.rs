@@ -30,6 +30,7 @@ mod models;
 mod routes;
 mod utils;
 mod websockets;
+use actix::prelude::*;
 #[actix_web::main]
 pub async fn main() {
     dotenv().ok();
@@ -57,13 +58,13 @@ pub async fn real_main() -> ApiResult<()> {
 
     let pool = get_pg_pool()?;
     let redis_pool = get_redis_pool()?;
-
     run_migrations(&pool).await?;
-
+    let server = websockets::server::ChatServer::new().start();
     HttpServer::new(move || {
         App::new()
             .app_data(Data::new(pool.clone()))
             .app_data(Data::new(redis_pool.clone()))
+            .app_data(Data::new(server.clone()))
             .wrap(routes::error_handlers())
             .wrap(Logger::default())
             .wrap(NormalizePath::trim())
@@ -75,6 +76,7 @@ pub async fn real_main() -> ApiResult<()> {
                     .service(basic::post_auth_refresh)
                     .service(basic::post_auth_logout),
             )
+            .route("/ws", web::get().to(websockets::chat_route))
             .service(
                 web::scope("/spaces")
                     .service(spaces::post_spaces)

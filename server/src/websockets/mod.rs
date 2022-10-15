@@ -1,44 +1,64 @@
-use serde::Serialize;
-use crate::utils::music::Track;
 
-#[derive(Debug, Serialize)]
-pub enum Loop {
-    None, 
-    Track, 
-    Queue,
+
+use std::{
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+    time::Instant,
+};
+
+use actix::*;
+use actix_files::{Files, NamedFile};
+use actix_web::{
+    middleware::Logger, web, App, Error, HttpRequest, HttpResponse, HttpServer, Responder,
+};
+use actix_web_actors::ws;
+
+pub mod server;
+pub mod session;
+
+async fn index() -> impl Responder {
+    NamedFile::open_async("./static/index.html").await.unwrap()
 }
 
-#[derive(Debug, Serialize)]
-pub struct UpdateTrack {
-    current_track: i64, 
-    position: u32, // number of seconds since the start 
-    play: bool, 
-    looping: Loop,
+/// Entry point for our websocket route
+pub async fn chat_route(
+    req: HttpRequest,
+    stream: web::Payload,
+    srv: web::Data<Addr<server::ChatServer>>,
+) -> Result<HttpResponse, Error> {
+    ws::start(
+        session::WsChatSession {
+            id: 0,
+            hb: Instant::now(),
+            room: "main".to_owned(),
+            name: None,
+            addr: srv.get_ref().clone(),
+        },
+        &req,
+        stream,
+    )
 }
 
-#[derive(Debug, Serialize)]
-pub struct UpdateQueue {
-    new_queue: Vec<Track>,
-}
+/*
+#[actix_web::main]
+async fn main() -> std::io::Result<()> {
 
-#[derive(Debug, Serialize)]
-pub enum Kind {
-    UpdateQueue, 
-    UpdatePlayer, 
-}
+    // start chat server actor
+    //let server = server::ChatServer::new(app_state.clone()).start();
 
-#[derive(Debug, Serialize)]
-pub enum Data {
-    UpdateTrack(UpdateTrack),
-    UpdateQueue(UpdateQueue),
-}
+    log::info!("starting HTTP server at http://localhost:8080");
 
-#[derive(Debug, Serialize)]
-pub struct General {
-    kind: Kind,
-    data: Data 
-}
+    HttpServer::new(move || {
+        App::new()
 
-impl UpdateTrack {
-    
+            .route("/ws", web::get().to(chat_route))
+
+    })
+        .workers(2)
+        .bind(("127.0.0.1", 8080))?
+        .run()
+        .await
 }
+ */

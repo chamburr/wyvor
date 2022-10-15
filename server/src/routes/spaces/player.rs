@@ -16,7 +16,11 @@ use actix_web::{
     web::{Data, Json},
 };
 use chrono::Utc;
-
+use crate::websockets::server;
+use crate::websockets::server::{ChatServer, General};
+use crate::websockets::server::Kind::{UpdatePlayer, UpdateQueue};
+use crate::websockets::session;
+use actix::*;
 
 /* EVENTUALLYDO: optimise this
 #[derive(Debug, Deserialize, Serialize)]
@@ -35,6 +39,7 @@ pub async fn get_guild_player(
     user: User,
     redis_pool: Data<RedisPool>,
     pool: Data<PgPool>,
+    addr: Data<Addr<ChatServer>>,
     Path(id): Path<u64>,
 ) -> ApiResult<ApiResponse> {
     user.can_read_space(&pool, id as i64).await?;
@@ -48,7 +53,6 @@ pub async fn get_guild_player(
     }
     player.set_position(position);
     player.set_time(Utc::now().timestamp_millis());
-
 
     ApiResponse::ok().data(player).finish()
 }
@@ -104,8 +108,10 @@ pub async fn patch_guild_player(
     user: User,
     pool: Data<PgPool>,
     redis_pool: Data<RedisPool>,
+    addr: Data<Addr<ChatServer>>,
     Path(id): Path<u64>,
     Json(mut new_player): Json<PlayerState>,
+
 ) -> ApiResult<ApiResponse> {
     user.can_read_space(&pool, id as i64).await?;
     // TODO: Implement checks in the playerstate
@@ -140,7 +146,11 @@ pub async fn patch_guild_player(
     } */
     
     player.update(&redis_pool).await?;
-
+    let update = General {
+        kind: server::Kind::UpdatePlayer,
+        data: server::UpdateData::UpdatePlayer(player.clone())
+    };
+    addr.do_send(update);
     ApiResponse::ok().finish()
 }
 

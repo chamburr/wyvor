@@ -6,11 +6,12 @@ use crate::{
 use crate::utils::player::Player;
 use crate::utils::queue::Queue;
 use actix_web_lab::extract::Path;
+
 #[derive(Debug, Deserialize)]
 pub struct SimpleQueueItem {
     pub track: String,
 }
-
+use actix::*;
 #[derive(Debug, Deserialize)]
 pub struct SimplePosition {
     pub position: u32,
@@ -23,6 +24,10 @@ use actix_web::{
 
 use serde::Deserialize;
 
+use crate::websockets::server;
+use crate::websockets::server::{ChatServer, General};
+use crate::websockets::server::Kind::UpdateQueue;
+use crate::websockets::session;
 
 
 #[get("/{id}/queue")]
@@ -107,7 +112,9 @@ pub async fn delete_guild_queue(
     user: User,
     pool: Data<PgPool>,
     redis_pool: Data<RedisPool>,
+    addr: Data<Addr<ChatServer>>,
     Path(id): Path<u64>,
+
 ) -> ApiResult<ApiResponse> {
     user.can_manage_space(&pool, id as i64).await?;
 
@@ -115,8 +122,17 @@ pub async fn delete_guild_queue(
     let mut player = Player::new(&redis_pool, id as i64).await?;
     player.set_playing(-1);
     tracks.delete(&redis_pool).await?;
+    let update = General {
+        kind: server::Kind::UpdateQueue,
+        data: server::UpdateData::UpdateQueue(tracks.clone())
+    };
+    addr.do_send(update);
     player.update(&redis_pool).await?;
-
+    let update = General {
+        kind: server::Kind::UpdatePlayer,
+        data: server::UpdateData::UpdatePlayer(player.clone())
+    };
+    addr.do_send(update);
     ApiResponse::ok().finish()
 }
 
@@ -125,6 +141,7 @@ pub async fn post_guild_queue_shuffle(
     user: User,
     pool: Data<PgPool>,
     redis_pool: Data<RedisPool>,
+    addr: Data<Addr<ChatServer>>,
     Path(id): Path<u64>,
 ) -> ApiResult<ApiResponse> {
     user.can_manage_space(&pool, id as i64).await?;
@@ -135,6 +152,11 @@ pub async fn post_guild_queue_shuffle(
     tracks.shuffle();
     tracks.insert(player.playing() as usize, current_track);
     tracks.update(&redis_pool).await?;
+    let update = General {
+        kind: server::Kind::UpdateQueue,
+        data: server::UpdateData::UpdateQueue(tracks.clone())
+    };
+    addr.do_send(update);
     ApiResponse::ok().finish()
 
 }
@@ -144,6 +166,7 @@ pub async fn put_guild_queue_item_position(
     user: User,
     pool: Data<PgPool>,
     redis_pool: Data<RedisPool>,
+    addr: Data<Addr<ChatServer>>,
     Path((id, item)): Path<(u64, u32)>,
     Json(new_position): Json<SimplePosition>,
 ) -> ApiResult<ApiResponse> {
@@ -165,7 +188,19 @@ pub async fn put_guild_queue_item_position(
         player.set_playing(player.playing() + 1);
     }
     tracks.update(&redis_pool).await?;
+    let update = General {
+        kind: server::Kind::UpdateQueue,
+        data: server::UpdateData::UpdateQueue(tracks.clone())
+    };
+    addr.do_send(update);
+
     player.update(&redis_pool).await?;
+    let update = General {
+        kind: server::Kind::UpdatePlayer,
+        data: server::UpdateData::UpdatePlayer(player.clone())
+    };
+    addr.do_send(update);
+
     ApiResponse::ok().finish()
 }
 
@@ -174,6 +209,7 @@ pub async fn delete_guild_queue_item(
     user: User,
     pool: Data<PgPool>,
     redis_pool: Data<RedisPool>,
+    addr: Data<Addr<ChatServer>>,
     Path((id, item)): Path<(u64, u32)>,
 ) -> ApiResult<ApiResponse> {
     user.can_manage_space(&pool, id as i64).await?;
@@ -188,10 +224,20 @@ pub async fn delete_guild_queue_item(
     }
     tracks.remove(item);
     tracks.update(&redis_pool).await?;
+    let update = General {
+        kind: server::Kind::UpdateQueue,
+        data: server::UpdateData::UpdateQueue(tracks.clone())
+    };
+    addr.do_send(update);
     if (item as i64)< player.playing() {
         player.set_playing(player.playing() - 1);
     }
     player.update(&redis_pool).await?;
+    let update = General {
+        kind: server::Kind::UpdatePlayer,
+        data: server::UpdateData::UpdatePlayer(player.clone())
+    };
+    addr.do_send(update);
 
     ApiResponse::ok().finish()
 }
