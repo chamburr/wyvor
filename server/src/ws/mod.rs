@@ -1,5 +1,3 @@
-
-
 use std::{
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -8,8 +6,6 @@ use std::{
     time::Instant,
 };
 
-use actix::*;
-use actix_files::{Files, NamedFile};
 use actix_web::{
     middleware::Logger, web, App, Error, HttpRequest, HttpResponse, HttpServer, Responder,
 };
@@ -17,10 +13,6 @@ use actix_web_actors::ws;
 
 pub mod server;
 pub mod session;
-
-async fn index() -> impl Responder {
-    NamedFile::open_async("./static/index.html").await.unwrap()
-}
 
 /// Entry point for our websocket route
 pub async fn chat_route(

@@ -1,31 +1,22 @@
-//! `ChatServer` is an actor. It maintains list of connection client session.
-//! And manages available rooms. Peers send messages to other peers in same
-//! room through `ChatServer`.
-
 use std::{
     collections::{HashMap, HashSet},
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
     },
-
 };
 use std::borrow::Borrow;
-use utils::player::Player;
-use utils::queue::Queue;
+use crate::utils::player::Player;
+use crate::utils::queue::Queue;
 use actix::prelude::*;
 use diesel::dsl::Update;
 use rand::{self, rngs::ThreadRng, Rng};
 use rand::distributions::uniform::SampleBorrow;
 
-/// Chat server sends this messages to session
 #[derive(Message)]
 #[rtype(result = "()")]
 pub struct Message(pub String);
 
-/// Message for chat server communications
-
-/// New chat session is created
 #[derive(Message)]
 #[rtype(usize)]
 pub struct Connect {
