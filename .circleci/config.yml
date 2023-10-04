@@ -186,7 +186,7 @@ workflows:
           filters:
             branches:
               only:
-                - master
+                - main
                 - dev
     jobs:
       - test_rust

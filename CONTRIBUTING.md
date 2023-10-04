@@ -20,8 +20,8 @@ request.
 
 Please follow these guidelines related to submitting a pull request.
 
-- The `master` branch is a snapshot of the latest stable release. Please do not make pull requests
-  against the `master` branch, use the `dev` branch instead.
+- The `main` branch is a snapshot of the latest stable release. Please do not make pull requests
+  against the `main` branch, use the `dev` branch instead.
 - Always format your code with `scripts/format.sh` and make sure `scripts/lint.sh` returns no
   warnings or errors before opening a pull request.
 - Follow our commit conventions below. For subsequent commits to the pull request, it is okay not to

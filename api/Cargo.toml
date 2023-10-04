@@ -41,7 +41,7 @@ url = { version = "2.1.1", default-features = false }
 
 [dependencies.twilight-andesite]
 git = "https://github.com/chamburr/twilight-andesite"
-branch = "master"
+branch = "main"
 default-features = false
 features = ["http-support", "rustls"]
 
